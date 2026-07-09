@@ -7,6 +7,7 @@ dist/
 build/
 *.egg-info/
 data/
+output/
 .DS_Store
 frontend/dist/
 frontend/node_modules/

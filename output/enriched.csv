@@ -1,4 +1,0 @@
-first_name,last_name,email,title,company,city,state,country,_id,enriched_nearest_baseball_team
-Joshua,Osborn,josh@acmecorp.com,VP Sales,Acme Corp,San Francisco,CA,USA,c4d6147f3536,"{""team"": ""San Francisco Giants"", ""city"": ""San Francisco"", ""distance_miles"": 1.2, ""talking_point"": ""the Giants""}"
-Maria,Garcia,maria.g@techstart.io,Head of Marketing,TechStart,Austin,TX,USA,5d283d2c4aa2,"{""team"": ""Houston Astros"", ""city"": ""Houston"", ""distance_miles"": 147.2, ""talking_point"": ""the Astros""}"
-Robert,Thompson,rthompson@buildco.com,CEO,BuildCo LLC,Chicago,IL,USA,1f5e0b57f360,"{""team"": ""Chicago White Sox"", ""city"": ""Chicago"", ""distance_miles"": 3.2, ""talking_point"": ""the Sox""}"
