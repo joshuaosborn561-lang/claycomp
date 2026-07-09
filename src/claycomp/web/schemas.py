@@ -89,6 +89,24 @@ class ColumnProposal(BaseModel):
     reasoning: str | None = None
 
 
+class TableMeta(BaseModel):
+    id: str
+    name: str
+    row_count: int = 0
+    updated_at: str | None = None
+    created_at: str | None = None
+
+
+class TableData(BaseModel):
+    id: str | None = None
+    name: str = "My Leads"
+    records: list[RecordDTO] = Field(default_factory=list)
+    columns: list[dict[str, Any]] = Field(default_factory=list)
+    business_context: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
 def dto_to_record(dto: RecordDTO) -> Record:
     return Record.model_validate(dto.model_dump())
 

@@ -7,12 +7,13 @@ import {
   Play,
   Plus,
   Sparkles,
-  Table2,
   Upload,
 } from 'lucide-react'
-import { exportCsv, loadSample, streamEnrich, uploadCsv } from '../api'
+import { exportCsv, streamEnrich, uploadCsv } from '../api'
 import { useSettings } from '../context/SettingsContext'
+import { useTable } from '../context/TableContext'
 import SculptorPanel from './SculptorPanel'
+import TableSwitcher from './TableSwitcher'
 import type { Enricher, EnrichmentColumn, LeadRecord } from '../types'
 import { columnOutputKey, displayLocation, displayName, formatCell } from '../types'
 
@@ -26,15 +27,9 @@ const SOURCE_COLUMNS = [
 
 const SANDBOX_ROWS = 3
 
-type Props = {
-  records: LeadRecord[]
-  enrichers: Enricher[]
-  onRecordsChange: (records: LeadRecord[]) => void
-}
-
-export default function TableMode({ records, enrichers, onRecordsChange }: Props) {
+export default function TableMode() {
   const { settings } = useSettings()
-  const [columns, setColumns] = useState<EnrichmentColumn[]>([])
+  const { records, columns, enrichers, setRecords, setColumns } = useTable()
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [showSculptor, setShowSculptor] = useState(true)
   const [runningCol, setRunningCol] = useState<string | null>(null)
@@ -43,7 +38,7 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
   const fileRef = useRef<HTMLInputElement>(null)
 
   const addColumn = (col: EnrichmentColumn) => {
-    setColumns((c) => [...c, col])
+    setColumns([...columns, col])
     setShowAddMenu(false)
   }
 
@@ -82,7 +77,7 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
               ...updated[idx],
               enriched: { ...updated[idx].enriched, [column]: event.value },
             }
-            onRecordsChange([...updated])
+            setRecords([...updated])
           }
         }
       },
@@ -95,7 +90,7 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
       },
     )
 
-    onRecordsChange(result)
+    setRecords(result)
     setRunningCol(null)
     setSandboxCol(null)
     setProgress(null)
@@ -103,7 +98,7 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
 
   const handleUpload = async (file: File) => {
     const { records: next } = await uploadCsv(file)
-    onRecordsChange(next)
+    setRecords(next)
     setColumns([])
   }
 
@@ -120,41 +115,25 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
   return (
     <div className="h-full flex">
       <aside className="w-56 shrink-0 border-r border-slate-200/80 bg-white flex flex-col">
-        <div className="p-4 border-b border-slate-100">
-          <div className="flex items-center gap-2 text-slate-700">
-            <Table2 className="w-4 h-4 text-clay-500" />
-            <span className="text-sm font-medium">Lead Table</span>
-          </div>
+        <div className="p-3 border-b border-slate-100">
+          <TableSwitcher />
         </div>
 
         <div className="p-3 flex flex-col gap-1.5">
           <SidebarButton icon={<Upload className="w-3.5 h-3.5" />} onClick={() => fileRef.current?.click()}>
             Import CSV
           </SidebarButton>
-          <SidebarButton
-            icon={<Table2 className="w-3.5 h-3.5" />}
-            onClick={async () => {
-              const { records: next } = await loadSample()
-              onRecordsChange(next)
-              setColumns([])
-            }}
-          >
-            Load sample
-          </SidebarButton>
           <SidebarButton icon={<Download className="w-3.5 h-3.5" />} onClick={handleExport}>
             Export CSV
           </SidebarButton>
-          <SidebarButton
-            icon={<Hammer className="w-3.5 h-3.5" />}
-            onClick={() => setShowSculptor(!showSculptor)}
-          >
+          <SidebarButton icon={<Hammer className="w-3.5 h-3.5" />} onClick={() => setShowSculptor(!showSculptor)}>
             {showSculptor ? 'Hide Sculptor' : 'Open Sculptor'}
           </SidebarButton>
         </div>
 
         <div className="mt-auto p-4 border-t border-slate-100">
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            Use Sculptor to build enrichments in plain English. Sandbox tests 3 rows first.
+            Tables auto-save as you work. Cloud sync when Upstash is configured on Vercel.
           </p>
         </div>
       </aside>
@@ -209,43 +188,23 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
               <tr className="bg-white border-b border-slate-200">
                 <th className="w-10 px-3 py-2.5 text-left text-[11px] font-medium text-slate-400 border-r border-slate-100">#</th>
                 {SOURCE_COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-r border-slate-100 min-w-[140px] bg-slate-50/50"
-                  >
+                  <th key={col.key} className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-r border-slate-100 min-w-[140px] bg-slate-50/50">
                     {col.label}
                   </th>
                 ))}
                 {columns.map((col) => (
-                  <th
-                    key={col.id}
-                    className="px-3 py-2.5 text-left text-[11px] font-semibold text-clay-700 uppercase tracking-wide border-r border-clay-100 min-w-[160px] bg-clay-50/80"
-                  >
+                  <th key={col.id} className="px-3 py-2.5 text-left text-[11px] font-semibold text-clay-700 uppercase tracking-wide border-r border-clay-100 min-w-[160px] bg-clay-50/80">
                     <div className="flex items-center justify-between gap-1">
                       <span className="flex items-center gap-1 truncate">
                         <Sparkles className="w-3 h-3 shrink-0" />
                         <span className="truncate">{col.label}</span>
                       </span>
                       <div className="flex shrink-0">
-                        <button
-                          onClick={() => runColumn(col, true)}
-                          disabled={runningCol === col.id}
-                          className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40"
-                          title="Sandbox (3 rows)"
-                        >
+                        <button onClick={() => runColumn(col, true)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title="Sandbox (3 rows)">
                           <FlaskConical className="w-3 h-3" />
                         </button>
-                        <button
-                          onClick={() => runColumn(col)}
-                          disabled={runningCol === col.id}
-                          className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40"
-                          title="Run all rows"
-                        >
-                          {runningCol === col.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Play className="w-3 h-3" />
-                          )}
+                        <button onClick={() => runColumn(col)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title="Run all rows">
+                          {runningCol === col.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                         </button>
                       </div>
                     </div>
@@ -256,12 +215,7 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
             </thead>
             <tbody>
               {records.map((row, i) => (
-                <tr
-                  key={row.id}
-                  className={`border-b border-slate-100 hover:bg-white transition-colors ${
-                    sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''
-                  }`}
-                >
+                <tr key={row.id} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''}`}>
                   <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">{i + 1}</td>
                   {SOURCE_COLUMNS.map((col) => (
                     <td key={col.key} className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]">
@@ -299,49 +253,27 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
 
       {showSculptor && (
         <SculptorPanel
-          records={records}
-          columns={columns}
           onAddColumn={addColumn}
-          onApplyWorkflow={(steps) => {
-            for (const col of steps) addColumn(col)
-          }}
+          onApplyWorkflow={(steps) => { for (const col of steps) addColumn(col) }}
           onSandbox={(col) => {
             if (!columns.find((c) => c.id === col.id)) addColumn(col)
             runColumn(col, true)
           }}
-          onRecordsChange={onRecordsChange}
         />
       )}
 
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".csv"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) handleUpload(file)
-          e.target.value = ''
-        }}
-      />
+      <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => {
+        const file = e.target.files?.[0]
+        if (file) handleUpload(file)
+        e.target.value = ''
+      }} />
     </div>
   )
 }
 
-function SidebarButton({
-  icon,
-  children,
-  onClick,
-}: {
-  icon: React.ReactNode
-  children: React.ReactNode
-  onClick: () => void
-}) {
+function SidebarButton({ icon, children, onClick }: { icon: React.ReactNode; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors w-full text-left"
-    >
+    <button onClick={onClick} className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors w-full text-left">
       {icon}
       {children}
     </button>

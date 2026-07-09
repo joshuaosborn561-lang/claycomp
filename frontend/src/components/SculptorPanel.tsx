@@ -14,18 +14,17 @@ import {
 import ReactMarkdown from 'react-markdown'
 import { streamSculptor } from '../api'
 import { useSettings } from '../context/SettingsContext'
+import { useTable } from '../context/TableContext'
 import type {
   ChatMessage,
   ColumnProposal,
   DiagnosisIssue,
   EnrichmentColumn,
-  LeadRecord,
   OutreachDraft,
   TableAnalysis,
   WorkflowProposal,
+  LeadRecord,
 } from '../types'
-
-const BUSINESS_CTX_KEY = 'claycomp-business-context'
 
 const STARTERS = [
   'What enrichments should I add for cold outreach?',
@@ -37,23 +36,14 @@ const STARTERS = [
 ]
 
 type Props = {
-  records: LeadRecord[]
-  columns: EnrichmentColumn[]
   onAddColumn: (col: EnrichmentColumn) => void
   onApplyWorkflow: (steps: EnrichmentColumn[]) => void
   onSandbox: (col: EnrichmentColumn) => void
-  onRecordsChange: (records: LeadRecord[]) => void
 }
 
-export default function SculptorPanel({
-  records,
-  columns,
-  onAddColumn,
-  onApplyWorkflow,
-  onSandbox,
-  onRecordsChange,
-}: Props) {
+export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox }: Props) {
   const { settings } = useSettings()
+  const { records, columns, businessContext, setRecords, setBusinessContext } = useTable()
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -72,12 +62,7 @@ export default function SculptorPanel({
   const [diagnosis, setDiagnosis] = useState<DiagnosisIssue[]>([])
   const [costNote, setCostNote] = useState<string | null>(null)
   const [showContext, setShowContext] = useState(false)
-  const [businessContext, setBusinessContext] = useState(() => localStorage.getItem(BUSINESS_CTX_KEY) || '')
   const bottomRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    localStorage.setItem(BUSINESS_CTX_KEY, businessContext)
-  }, [businessContext])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -154,7 +139,7 @@ export default function SculptorPanel({
             setCostNote(`${event.summary} (~${est.estimated_ai_calls} AI calls, sandbox: ${est.sandbox_cost})`)
           }
           if (event.type === 'records') {
-            onRecordsChange(event.records as LeadRecord[])
+            setRecords(event.records as LeadRecord[])
           }
           if (event.type === 'sandbox_complete') {
             content += `\n\n✓ Sandbox complete for **${event.label}** — check rows 1–3 in your table.`
@@ -165,7 +150,7 @@ export default function SculptorPanel({
         businessContext,
       )
 
-      onRecordsChange(updated)
+      setRecords(updated)
       setMessages((m) => [
         ...m,
         { id: `a-${Date.now()}`, role: 'assistant', content: content || 'Done.', proposals: newProposals.length ? newProposals : undefined },

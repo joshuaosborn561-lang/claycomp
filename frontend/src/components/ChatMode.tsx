@@ -3,7 +3,8 @@ import { ArrowUp, Paperclip, Sparkles, Upload } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { loadSample, streamChat, uploadCsv } from '../api'
 import { useSettings } from '../context/SettingsContext'
-import type { ChatMessage, LeadRecord } from '../types'
+import { useTable } from '../context/TableContext'
+import type { ChatMessage } from '../types'
 
 const STARTERS = [
   'Enrich all leads with nearest baseball team',
@@ -12,13 +13,11 @@ const STARTERS = [
   'Find the area nickname for each person',
 ]
 
-type Props = {
-  records: LeadRecord[]
-  onRecordsChange: (records: LeadRecord[]) => void
-}
+type Props = Record<string, never>
 
-export default function ChatMode({ records, onRecordsChange }: Props) {
+export default function ChatMode(_props: Props) {
   const { settings } = useSettings()
+  const { records, setRecords } = useTable()
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -63,7 +62,7 @@ export default function ChatMode({ records, onRecordsChange }: Props) {
         }
       }, settings)
 
-      if (updated) onRecordsChange(updated)
+      if (updated) setRecords(updated)
 
       setMessages((m) => [
         ...m,
@@ -82,7 +81,7 @@ export default function ChatMode({ records, onRecordsChange }: Props) {
 
   const handleUpload = async (file: File) => {
     const { records: next, count } = await uploadCsv(file)
-    onRecordsChange(next)
+    setRecords(next)
     setMessages((m) => [
       ...m,
       {
@@ -139,7 +138,7 @@ export default function ChatMode({ records, onRecordsChange }: Props) {
           <button
             onClick={async () => {
               const { records: next, count } = await loadSample()
-              onRecordsChange(next)
+              setRecords(next)
               setMessages((m) => [
                 ...m,
                 {

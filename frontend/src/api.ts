@@ -1,4 +1,5 @@
 import type { ChatMessage, ColumnProposal, Enricher, LeadRecord, Provider, ProviderSettings } from './types'
+import type { SavedTable, TableMeta } from './persistence/localTables'
 
 const API = '/api'
 
@@ -169,4 +170,50 @@ export async function streamSculptor(
     }
   }
   return { proposals, records: finalRecords }
+}
+
+export async function fetchTables(): Promise<TableMeta[]> {
+  try {
+    const res = await fetch(`${API}/tables`)
+    if (!res.ok) throw new Error('failed')
+    const data = await res.json()
+    return data.tables as TableMeta[]
+  } catch {
+    return []
+  }
+}
+
+export async function fetchTable(id: string): Promise<SavedTable | null> {
+  try {
+    const res = await fetch(`${API}/tables/${id}`)
+    if (!res.ok) return null
+    return res.json()
+  } catch {
+    return null
+  }
+}
+
+export async function saveTableRemote(table: SavedTable): Promise<SavedTable | null> {
+  try {
+    const method = table.id ? 'PUT' : 'POST'
+    const url = table.id ? `${API}/tables/${table.id}` : `${API}/tables`
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(table),
+    })
+    if (!res.ok) return null
+    return res.json()
+  } catch {
+    return null
+  }
+}
+
+export async function deleteTableRemote(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/tables/${id}`, { method: 'DELETE' })
+    return res.ok
+  } catch {
+    return false
+  }
 }

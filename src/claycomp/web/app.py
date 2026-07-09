@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,10 +23,12 @@ from claycomp.web.schemas import (
     EnricherInfo,
     ProviderInfoDTO,
     SculptorRequest,
+    TableData,
     dto_to_record,
     record_to_dto,
 )
 from claycomp.web.sculptor import stream_sculptor
+from claycomp.storage.tables import get_table_store
 
 # Local dev: serve built frontend from frontend/dist
 STATIC_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -43,6 +45,43 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health():
+    store = "upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file"
+    return {"ok": True, "storage": store}
+
+
+@app.get("/api/tables")
+async def list_tables():
+    store = get_table_store()
+    return {"tables": await store.list_tables()}
+
+
+@app.get("/api/tables/{table_id}")
+async def get_table(table_id: str):
+    store = get_table_store()
+    table = await store.get_table(table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+    return table
+
+
+@app.post("/api/tables")
+async def create_table(body: TableData):
+    store = get_table_store()
+    return await store.save_table(body.model_dump())
+
+
+@app.put("/api/tables/{table_id}")
+async def update_table(table_id: str, body: TableData):
+    store = get_table_store()
+    data = body.model_dump()
+    data["id"] = table_id
+    return await store.save_table(data)
+
+
+@app.delete("/api/tables/{table_id}")
+async def delete_table(table_id: str):
+    store = get_table_store()
+    await store.delete_table(table_id)
     return {"ok": True}
 
 
