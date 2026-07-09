@@ -116,15 +116,17 @@ Register it in `src/claycomp/enrichers/__init__.py` and run with `-c my_key`.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `OPENAI_API_KEY` | For AI enrichers | Name normalization, area nicknames, agent |
+| `OPENAI_API_KEY` | For AI enrichers | Name normalization, area nicknames, Sculptor, Chat |
+| `PERPLEXITY_API_KEY` | Optional | Use Perplexity as AI provider (web search capable) |
+| `ANTHROPIC_API_KEY` | Optional | Use Claude as AI provider |
 | `GOOGLE_PLACES_API_KEY` | Optional | Restaurant + company review lookups |
-| `OPENAI_MODEL` | Optional | Default: `gpt-4o-mini` |
+| `LLM_PROVIDER` | Optional | Default provider: `openai`, `perplexity`, or `anthropic` |
+| `OPENAI_MODEL` / `PERPLEXITY_MODEL` / `ANTHROPIC_MODEL` | Optional | Override default model per provider |
 
 ## What's next
 
 Ideas to vibe-code from here:
 
-- **Web UI** — table view like Clay with column toggles
 - **Waterfall enrichers** — try Clearbit, then Apollo, then scrape
 - **Email opener generator** — combine enrichments into a draft line
 - **Caching layer** — don't re-geocode the same city 500 times

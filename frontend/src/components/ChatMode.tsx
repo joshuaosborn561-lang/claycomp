@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Paperclip, Sparkles, Upload } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { loadSample, streamChat, uploadCsv } from '../api'
-import type { ChatMessage, Enricher, LeadRecord } from '../types'
+import { useSettings } from '../context/SettingsContext'
+import type { ChatMessage, LeadRecord } from '../types'
 
 const STARTERS = [
   'Enrich all leads with nearest baseball team',
@@ -13,11 +14,11 @@ const STARTERS = [
 
 type Props = {
   records: LeadRecord[]
-  enrichers: Enricher[]
   onRecordsChange: (records: LeadRecord[]) => void
 }
 
 export default function ChatMode({ records, onRecordsChange }: Props) {
+  const { settings } = useSettings()
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -60,7 +61,7 @@ export default function ChatMode({ records, onRecordsChange }: Props) {
           content += line
           setStreamBuffer(content)
         }
-      })
+      }, settings)
 
       if (updated) onRecordsChange(updated)
 

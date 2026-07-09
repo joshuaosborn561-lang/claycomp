@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import os
-
-from openai import AsyncOpenAI
+import json
 
 from claycomp.enrichers.base import Enricher
+from claycomp.llm import LLMMessage, llm_complete
 from claycomp.models import EnrichmentResult, Record
 
 SYSTEM_PROMPT = """You normalize first names for cold outreach emails.
@@ -22,29 +21,27 @@ class NameNormalizerEnricher(Enricher):
     description = "Normalize first name to conversational form (Rob, Liz, etc.)"
     requires_api_key = "OPENAI_API_KEY"
 
+    def __init__(self, provider: str | None = None, model: str | None = None):
+        self.provider = provider
+        self.model = model
+
     async def enrich(self, record: Record) -> EnrichmentResult:
         first = record.first_name
         if not first:
             return EnrichmentResult(column=self.name, value=None, source="skip", notes="no first name")
 
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            return EnrichmentResult(
-                column=self.name,
-                value=first,
-                source="fallback",
-                notes="OPENAI_API_KEY not set",
+        try:
+            result = await llm_complete(
+                [
+                    LLMMessage(role="system", content=SYSTEM_PROMPT),
+                    LLMMessage(role="user", content=f"First name: {first}"),
+                ],
+                provider=self.provider,
+                model=self.model,
+                temperature=0,
+                max_tokens=20,
             )
-
-        client = AsyncOpenAI(api_key=api_key)
-        resp = await client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"First name: {first}"},
-            ],
-            temperature=0,
-            max_tokens=20,
-        )
-        normalized = (resp.choices[0].message.content or first).strip().strip('"')
-        return EnrichmentResult(column=self.name, value=normalized, source="openai", confidence=0.9)
+            normalized = (result.content or first).strip().strip('"')
+            return EnrichmentResult(column=self.name, value=normalized, source=result.provider, confidence=0.9)
+        except Exception as e:
+            return EnrichmentResult(column=self.name, value=first, source="fallback", notes=str(e))

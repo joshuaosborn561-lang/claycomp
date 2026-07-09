@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import os
-
-from openai import AsyncOpenAI
 
 from claycomp.enrichers.base import Enricher
+from claycomp.llm import LLMMessage, llm_complete
 from claycomp.models import EnrichmentResult, Record
 
 SYSTEM_PROMPT = """You find the conversational/local nickname for a geographic area.
@@ -26,28 +24,32 @@ class AreaNicknameEnricher(Enricher):
     description = "Conversational name for someone's location"
     requires_api_key = "OPENAI_API_KEY"
 
+    def __init__(self, provider: str | None = None, model: str | None = None):
+        self.provider = provider
+        self.model = model
+
     async def enrich(self, record: Record) -> EnrichmentResult:
         location = record.display_location()
         if not location:
             return EnrichmentResult(column=self.name, value=None, source="skip", notes="no location")
 
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
+        try:
+            result = await llm_complete(
+                [
+                    LLMMessage(role="system", content=SYSTEM_PROMPT),
+                    LLMMessage(role="user", content=f"Location: {location}"),
+                ],
+                provider=self.provider,
+                model=self.model,
+                temperature=0.3,
+                json_mode=True,
+            )
+            data = json.loads(result.content or "{}")
+            return EnrichmentResult(column=self.name, value=data, source=result.provider, confidence=0.85)
+        except Exception as e:
             return EnrichmentResult(
                 column=self.name,
                 value={"nickname": location, "how_to_reference": f"in {location}"},
                 source="fallback",
+                notes=str(e),
             )
-
-        client = AsyncOpenAI(api_key=api_key)
-        resp = await client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Location: {location}"},
-            ],
-            temperature=0.3,
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(resp.choices[0].message.content or "{}")
-        return EnrichmentResult(column=self.name, value=data, source="openai", confidence=0.85)

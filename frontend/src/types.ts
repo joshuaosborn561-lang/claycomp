@@ -22,20 +22,52 @@ export type Enricher = {
   requires_api_key?: string | null
 }
 
+export type Provider = {
+  id: string
+  name: string
+  env_key: string
+  models: string[]
+  default_model: string
+  configured: boolean
+}
+
+export type ProviderSettings = {
+  providerId: string
+  model: string
+}
+
 export type EnrichmentColumn = {
   id: string
   enricherKey: string
   label: string
+  columnName?: string
+  customPrompt?: string
+  provider?: string
+  model?: string
   running?: boolean
+}
+
+export type ColumnProposal = {
+  column_name: string
+  label: string
+  enricher_key: string
+  custom_prompt?: string
+  reasoning?: string
 }
 
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant'
   content: string
+  proposals?: ColumnProposal[]
 }
 
 export type AppMode = 'table' | 'chat'
+
+export const DEFAULT_PROVIDER_SETTINGS: ProviderSettings = {
+  providerId: 'openai',
+  model: 'gpt-4o-mini',
+}
 
 export function displayName(r: LeadRecord): string {
   if (r.full_name) return r.full_name
@@ -62,4 +94,10 @@ export function formatCell(value: unknown): string {
     return JSON.stringify(value)
   }
   return String(value)
+}
+
+export function columnOutputKey(col: EnrichmentColumn, enrichers: Enricher[]): string {
+  if (col.enricherKey === 'custom' && col.columnName) return col.columnName
+  const e = enrichers.find((x) => x.key === col.enricherKey)
+  return e?.name || col.label
 }

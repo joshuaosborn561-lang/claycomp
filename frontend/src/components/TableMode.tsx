@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import {
   Download,
+  FlaskConical,
+  Hammer,
   Loader2,
   Play,
   Plus,
@@ -9,8 +11,10 @@ import {
   Upload,
 } from 'lucide-react'
 import { exportCsv, loadSample, streamEnrich, uploadCsv } from '../api'
+import { useSettings } from '../context/SettingsContext'
+import SculptorPanel from './SculptorPanel'
 import type { Enricher, EnrichmentColumn, LeadRecord } from '../types'
-import { displayLocation, displayName, formatCell } from '../types'
+import { columnOutputKey, displayLocation, displayName, formatCell } from '../types'
 
 const SOURCE_COLUMNS = [
   { key: 'name', label: 'Name', get: (r: LeadRecord) => displayName(r) },
@@ -20,6 +24,8 @@ const SOURCE_COLUMNS = [
   { key: 'location', label: 'Location', get: (r: LeadRecord) => displayLocation(r) },
 ]
 
+const SANDBOX_ROWS = 3
+
 type Props = {
   records: LeadRecord[]
   enrichers: Enricher[]
@@ -27,49 +33,71 @@ type Props = {
 }
 
 export default function TableMode({ records, enrichers, onRecordsChange }: Props) {
+  const { settings } = useSettings()
   const [columns, setColumns] = useState<EnrichmentColumn[]>([])
   const [showAddMenu, setShowAddMenu] = useState(false)
+  const [showSculptor, setShowSculptor] = useState(true)
   const [runningCol, setRunningCol] = useState<string | null>(null)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [sandboxCol, setSandboxCol] = useState<string | null>(null)
+  const [progress, setProgress] = useState<{ done: number; total: number; mode?: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const addColumn = (enricher: Enricher) => {
-    const col: EnrichmentColumn = {
-      id: `${enricher.key}-${Date.now()}`,
-      enricherKey: enricher.key,
-      label: enricher.name,
-    }
+  const addColumn = (col: EnrichmentColumn) => {
     setColumns((c) => [...c, col])
     setShowAddMenu(false)
   }
 
-  const runColumn = async (col: EnrichmentColumn) => {
-    const enricher = enrichers.find((e) => e.key === col.enricherKey)
-    if (!enricher) return
+  const addBuiltInColumn = (enricher: Enricher) => {
+    addColumn({
+      id: `${enricher.key}-${Date.now()}`,
+      enricherKey: enricher.key,
+      label: enricher.name,
+      provider: settings.providerId,
+      model: settings.model,
+    })
+  }
+
+  const runColumn = async (col: EnrichmentColumn, sandbox = false) => {
+    const enricherKey = col.enricherKey === 'custom' ? 'custom' : col.enricherKey
+    const rowIds = sandbox ? records.slice(0, SANDBOX_ROWS).map((r) => r.id) : undefined
+    const total = sandbox ? Math.min(SANDBOX_ROWS, records.length) : records.length
 
     setRunningCol(col.id)
-    setProgress({ done: 0, total: records.length })
+    if (sandbox) setSandboxCol(col.id)
+    setProgress({ done: 0, total, mode: sandbox ? 'sandbox' : 'full' })
 
     const updated = [...records]
-    const result = await streamEnrich(updated, col.enricherKey, (event) => {
-      if (event.type === 'progress' || event.type === 'error') {
-        setProgress({ done: event.done as number, total: event.total as number })
-        const idx = updated.findIndex((r) => r.id === event.row_id)
-        if (idx >= 0) {
-          const column = event.column as string
-          if (event.type === 'progress') {
+    const outputKey = columnOutputKey(col, enrichers)
+
+    const result = await streamEnrich(
+      updated,
+      enricherKey,
+      (event) => {
+        if (event.type === 'progress' || event.type === 'error') {
+          setProgress({ done: event.done as number, total: event.total as number, mode: sandbox ? 'sandbox' : 'full' })
+          const idx = updated.findIndex((r) => r.id === event.row_id)
+          if (idx >= 0 && event.type === 'progress') {
+            const column = (event.column as string) || outputKey
             updated[idx] = {
               ...updated[idx],
               enriched: { ...updated[idx].enriched, [column]: event.value },
             }
+            onRecordsChange([...updated])
           }
-          onRecordsChange([...updated])
         }
-      }
-    })
+      },
+      {
+        provider: col.provider || settings.providerId,
+        model: col.model || settings.model,
+        customPrompt: col.customPrompt,
+        columnName: col.columnName || col.label,
+        rowIds,
+      },
+    )
 
     onRecordsChange(result)
     setRunningCol(null)
+    setSandboxCol(null)
     setProgress(null)
   }
 
@@ -91,7 +119,6 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
 
   return (
     <div className="h-full flex">
-      {/* Sidebar */}
       <aside className="w-56 shrink-0 border-r border-slate-200/80 bg-white flex flex-col">
         <div className="p-4 border-b border-slate-100">
           <div className="flex items-center gap-2 text-slate-700">
@@ -117,24 +144,29 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
           <SidebarButton icon={<Download className="w-3.5 h-3.5" />} onClick={handleExport}>
             Export CSV
           </SidebarButton>
+          <SidebarButton
+            icon={<Hammer className="w-3.5 h-3.5" />}
+            onClick={() => setShowSculptor(!showSculptor)}
+          >
+            {showSculptor ? 'Hide Sculptor' : 'Open Sculptor'}
+          </SidebarButton>
         </div>
 
         <div className="mt-auto p-4 border-t border-slate-100">
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            Clay-style table. Add AI enrichment columns, then run them row by row.
+            Use Sculptor to build enrichments in plain English. Sandbox tests 3 rows first.
           </p>
         </div>
       </aside>
 
-      {/* Table area */}
       <div className="flex-1 flex flex-col min-w-0 bg-[#fafafa]">
-        {/* Toolbar */}
         <div className="h-12 shrink-0 border-b border-slate-200/60 bg-white flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
             <span className="text-sm text-slate-600">{records.length} rows</span>
             {progress && (
-              <span className="text-xs text-clay-600 bg-clay-50 px-2 py-0.5 rounded-full">
-                Enriching {progress.done}/{progress.total}
+              <span className="text-xs text-clay-600 bg-clay-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                {progress.mode === 'sandbox' && <FlaskConical className="w-3 h-3" />}
+                {progress.mode === 'sandbox' ? 'Sandbox' : 'Enriching'} {progress.done}/{progress.total}
               </span>
             )}
           </div>
@@ -151,14 +183,12 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
             {showAddMenu && (
               <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-xl shadow-card border border-slate-200/80 z-20 overflow-hidden animate-fade-in">
                 <div className="px-3 py-2 border-b border-slate-100">
-                  <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">
-                    AI columns
-                  </p>
+                  <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">AI columns</p>
                 </div>
                 {enrichers.map((e) => (
                   <button
                     key={e.key}
-                    onClick={() => addColumn(e)}
+                    onClick={() => addBuiltInColumn(e)}
                     className="w-full text-left px-3 py-2.5 hover:bg-clay-50 transition-colors flex items-start gap-2.5"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-clay-500 mt-0.5 shrink-0" />
@@ -173,14 +203,11 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
           </div>
         </div>
 
-        {/* Spreadsheet */}
         <div className="flex-1 overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 z-10">
               <tr className="bg-white border-b border-slate-200">
-                <th className="w-10 px-3 py-2.5 text-left text-[11px] font-medium text-slate-400 border-r border-slate-100">
-                  #
-                </th>
+                <th className="w-10 px-3 py-2.5 text-left text-[11px] font-medium text-slate-400 border-r border-slate-100">#</th>
                 {SOURCE_COLUMNS.map((col) => (
                   <th
                     key={col.key}
@@ -194,23 +221,33 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
                     key={col.id}
                     className="px-3 py-2.5 text-left text-[11px] font-semibold text-clay-700 uppercase tracking-wide border-r border-clay-100 min-w-[160px] bg-clay-50/80"
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" />
-                        {col.label}
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="flex items-center gap-1 truncate">
+                        <Sparkles className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{col.label}</span>
                       </span>
-                      <button
-                        onClick={() => runColumn(col)}
-                        disabled={runningCol === col.id}
-                        className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40 transition-colors"
-                        title="Run column"
-                      >
-                        {runningCol === col.id ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Play className="w-3 h-3" />
-                        )}
-                      </button>
+                      <div className="flex shrink-0">
+                        <button
+                          onClick={() => runColumn(col, true)}
+                          disabled={runningCol === col.id}
+                          className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40"
+                          title="Sandbox (3 rows)"
+                        >
+                          <FlaskConical className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => runColumn(col)}
+                          disabled={runningCol === col.id}
+                          className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40"
+                          title="Run all rows"
+                        >
+                          {runningCol === col.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Play className="w-3 h-3" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </th>
                 ))}
@@ -221,28 +258,22 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
               {records.map((row, i) => (
                 <tr
                   key={row.id}
-                  className="border-b border-slate-100 hover:bg-white transition-colors group"
+                  className={`border-b border-slate-100 hover:bg-white transition-colors ${
+                    sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''
+                  }`}
                 >
-                  <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">
-                    {i + 1}
-                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">{i + 1}</td>
                   {SOURCE_COLUMNS.map((col) => (
-                    <td
-                      key={col.key}
-                      className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]"
-                    >
+                    <td key={col.key} className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]">
                       {col.get(row) || <span className="text-slate-300">—</span>}
                     </td>
                   ))}
                   {columns.map((col) => {
-                    const enricher = enrichers.find((e) => e.key === col.enricherKey)
-                    const value = enricher ? row.enriched[enricher.name] : null
-                    const isRunning = runningCol === col.id && !value
+                    const outputKey = columnOutputKey(col, enrichers)
+                    const value = row.enriched[outputKey]
+                    const isRunning = runningCol === col.id && value == null
                     return (
-                      <td
-                        key={col.id}
-                        className="px-3 py-2 border-r border-clay-50/50 bg-clay-50/20 truncate max-w-[220px]"
-                      >
+                      <td key={col.id} className="px-3 py-2 border-r border-clay-50/50 bg-clay-50/20 truncate max-w-[220px]">
                         {isRunning ? (
                           <span className="text-xs text-clay-400 animate-pulse-soft">Running…</span>
                         ) : (
@@ -265,6 +296,19 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
           )}
         </div>
       </div>
+
+      {showSculptor && (
+        <SculptorPanel
+          records={records}
+          columns={columns}
+          enrichers={enrichers}
+          onAddColumn={addColumn}
+          onSandbox={(col) => {
+            if (!columns.find((c) => c.id === col.id)) addColumn(col)
+            runColumn(col, true)
+          }}
+        />
+      )}
 
       <input
         ref={fileRef}
