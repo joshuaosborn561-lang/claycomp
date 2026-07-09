@@ -128,10 +128,11 @@ export async function streamChat(
 export async function streamSculptor(
   messages: ChatMessage[],
   records: LeadRecord[],
-  columns: { enricherKey: string; label: string }[],
+  columns: { enricherKey: string; label: string; customPrompt?: string; columnName?: string }[],
   onEvent: (data: Record<string, unknown>) => void,
   settings?: ProviderSettings,
-): Promise<{ proposals: ColumnProposal[] }> {
+  businessContext?: string,
+): Promise<{ proposals: ColumnProposal[]; records: LeadRecord[] }> {
   const res = await fetch(`${API}/sculptor/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -141,6 +142,7 @@ export async function streamSculptor(
       columns,
       provider: settings?.providerId,
       model: settings?.model,
+      business_context: businessContext || null,
     }),
   })
 
@@ -150,6 +152,7 @@ export async function streamSculptor(
   const decoder = new TextDecoder()
   let buffer = ''
   const proposals: ColumnProposal[] = []
+  let finalRecords = records
 
   while (true) {
     const { done, value } = await reader.read()
@@ -162,7 +165,8 @@ export async function streamSculptor(
       const data = JSON.parse(line.slice(6))
       onEvent(data)
       if (data.type === 'proposal') proposals.push(data.proposal as ColumnProposal)
+      if (data.type === 'records') finalRecords = data.records as LeadRecord[]
     }
   }
-  return { proposals }
+  return { proposals, records: finalRecords }
 }

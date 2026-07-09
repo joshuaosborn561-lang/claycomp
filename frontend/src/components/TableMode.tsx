@@ -301,12 +301,15 @@ export default function TableMode({ records, enrichers, onRecordsChange }: Props
         <SculptorPanel
           records={records}
           columns={columns}
-          enrichers={enrichers}
           onAddColumn={addColumn}
+          onApplyWorkflow={(steps) => {
+            for (const col of steps) addColumn(col)
+          }}
           onSandbox={(col) => {
             if (!columns.find((c) => c.id === col.id)) addColumn(col)
             runColumn(col, true)
           }}
+          onRecordsChange={onRecordsChange}
         />
       )}
 

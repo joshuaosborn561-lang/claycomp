@@ -26,7 +26,7 @@ from claycomp.web.schemas import (
     dto_to_record,
     record_to_dto,
 )
-from claycomp.web.sculptor import stream_sculptor, stream_sculptor_chat_fallback
+from claycomp.web.sculptor import stream_sculptor
 
 # Local dev: serve built frontend from frontend/dist
 STATIC_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -155,17 +155,15 @@ async def chat_stream(req: ChatRequest):
 @app.post("/api/sculptor/stream")
 async def sculptor_stream(req: SculptorRequest):
     async def generate() -> AsyncIterator[str]:
-        provider = req.provider or "openai"
-        if provider == "openai":
-            async for event in stream_sculptor(
-                req.messages, req.records, req.columns, provider=req.provider, model=req.model
-            ):
-                yield event
-        else:
-            async for event in stream_sculptor_chat_fallback(
-                req.messages, req.records, req.columns, provider=req.provider, model=req.model
-            ):
-                yield event
+        async for event in stream_sculptor(
+            req.messages,
+            req.records,
+            req.columns,
+            provider=req.provider,
+            model=req.model,
+            business_context=req.business_context,
+        ):
+            yield event
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

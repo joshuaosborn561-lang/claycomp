@@ -55,6 +55,35 @@ export type ColumnProposal = {
   reasoning?: string
 }
 
+export type WorkflowProposal = {
+  name: string
+  steps: ColumnProposal[]
+  reasoning?: string
+}
+
+export type OutreachDraft = {
+  lead_name: string
+  lead_id?: string
+  subject?: string
+  opener: string
+  full_email?: string
+}
+
+export type TableAnalysis = {
+  stats: Record<string, unknown>
+  insights?: {
+    focus?: string
+    insights?: string[]
+    priority_segment?: string
+  }
+}
+
+export type DiagnosisIssue = {
+  severity: 'error' | 'warning' | 'info'
+  issue: string
+  fix: string
+}
+
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant'

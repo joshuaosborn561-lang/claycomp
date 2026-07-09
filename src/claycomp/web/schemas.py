@@ -78,6 +78,7 @@ class SculptorRequest(BaseModel):
     columns: list[dict[str, Any]] = Field(default_factory=list)
     provider: str | None = None
     model: str | None = None
+    business_context: str | None = None
 
 
 class ColumnProposal(BaseModel):
