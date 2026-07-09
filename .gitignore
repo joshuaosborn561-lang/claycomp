@@ -8,3 +8,4 @@ build/
 *.egg-info/
 output/
 .DS_Store
+frontend/node_modules/

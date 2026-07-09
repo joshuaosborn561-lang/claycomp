@@ -16,7 +16,34 @@ Drop in a lead list and enrich each row with:
 
 Plus a flexible **AI agent** for custom prompts like "find their local NBA team" or "suggest a personalized opener."
 
-## Quick start
+## Web UI
+
+Claycomp has two modes — switch with the toggle in the header:
+
+| Mode | Vibe | Best for |
+|------|------|----------|
+| **Table** | Clay-style spreadsheet with AI enrichment columns | Import CSV, add columns, run enrichments, export |
+| **Chat** | ChatGPT-style assistant | Natural language: "enrich all with baseball teams", ask for openers |
+
+```bash
+# Build frontend + start server
+cd frontend && npm install && npm run build && cd ..
+claycomp serve
+
+# Open http://localhost:8000
+```
+
+For frontend development with hot reload:
+
+```bash
+# Terminal 1
+claycomp serve
+
+# Terminal 2
+cd frontend && npm run dev   # proxies /api → :8000, UI at :5173
+```
+
+## Quick start (CLI)
 
 ```bash
 # Install

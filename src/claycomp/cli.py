@@ -124,5 +124,18 @@ def sample():
     console.print(sample_path.read_text())
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload"),
+):
+    """Start the web UI."""
+    import uvicorn
+
+    console.print(f"[bold]Starting Claycomp UI[/bold] at http://{host}:{port}")
+    uvicorn.run("claycomp.web.app:app", host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()
