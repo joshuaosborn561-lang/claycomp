@@ -8,4 +8,7 @@ build/
 *.egg-info/
 output/
 .DS_Store
+frontend/dist/
 frontend/node_modules/
+.vercel
+node_modules/

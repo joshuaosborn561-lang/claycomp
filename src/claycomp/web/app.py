@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import AsyncIterator
 
 from pathlib import Path
@@ -27,7 +28,8 @@ from claycomp.web.schemas import (
 )
 from claycomp.web.sculptor import stream_sculptor, stream_sculptor_chat_fallback
 
-STATIC_DIR = Path(__file__).parent / "static"
+# Local dev: serve built frontend from frontend/dist
+STATIC_DIR = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 app = FastAPI(title="Claycomp", version="0.2.0")
 
@@ -168,5 +170,6 @@ async def sculptor_stream(req: SculptorRequest):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-if STATIC_DIR.is_dir():
+# Serve SPA locally only — on Vercel, static files come from frontend/dist via CDN
+if not os.getenv("VERCEL") and STATIC_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

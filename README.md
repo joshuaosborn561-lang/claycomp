@@ -24,6 +24,9 @@ Claycomp has two modes — switch with the toggle in the header:
 |------|------|----------|
 | **Table** | Clay-style spreadsheet with AI enrichment columns | Import CSV, add columns, run enrichments, export |
 | **Chat** | ChatGPT-style assistant | Natural language: "enrich all with baseball teams", ask for openers |
+| **Sculptor** | Clay-style co-pilot (in Table mode) | Describe enrichments in plain English, get column proposals, sandbox test before applying |
+
+Switch AI provider (OpenAI, Perplexity, Anthropic) via the **settings** button in the header.
 
 ```bash
 # Build frontend + start server
@@ -42,6 +45,37 @@ claycomp serve
 # Terminal 2
 cd frontend && npm run dev   # proxies /api → :8000, UI at :5173
 ```
+
+## Deploy to Vercel
+
+Full UI + API on Vercel (serverless Python for `/api/*`, static React for everything else).
+
+```bash
+# 1. Install Vercel CLI and log in (opens browser)
+npm i -g vercel
+vercel login
+
+# 2. From repo root — first deploy walks you through linking the project
+vercel
+
+# 3. Add environment variables in Vercel dashboard (Settings → Environment Variables)
+#    OPENAI_API_KEY, PERPLEXITY_API_KEY, ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY
+
+# 4. Production deploy
+vercel --prod
+```
+
+Or use the npm shortcuts from repo root:
+
+```bash
+npm run vercel:login
+npm run vercel:deploy
+```
+
+**Notes:**
+- API keys go in the Vercel project settings, not in the repo
+- Serverless functions have a 60s timeout (enrichment of large lists may need smaller batches)
+- Baseball enricher works without API keys; AI features need `OPENAI_API_KEY` (or another provider)
 
 ## Quick start (CLI)
 

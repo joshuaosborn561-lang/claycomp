@@ -9,7 +9,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../src/claycomp/web/static',
+    outDir: 'dist',
     emptyOutDir: true,
   },
 })

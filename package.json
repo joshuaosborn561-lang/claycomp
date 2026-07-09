@@ -1,0 +1,14 @@
+{
+  "name": "claycomp",
+  "private": true,
+  "scripts": {
+    "build": "cd frontend && npm ci && npm run build",
+    "dev": "cd frontend && npm run dev",
+    "vercel:login": "vercel login",
+    "vercel:deploy": "vercel --prod",
+    "vercel:preview": "vercel"
+  },
+  "devDependencies": {
+    "vercel": "^41.0.0"
+  }
+}
