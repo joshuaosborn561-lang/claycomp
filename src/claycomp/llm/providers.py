@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
+from claycomp.keys import get_api_key, has_api_key
 from claycomp.llm.types import LLMCompletion, LLMMessage, LLMToolCall, ProviderInfo
 
 
@@ -18,16 +19,17 @@ class LLMProvider(ABC):
     models: list[str]
 
     def is_configured(self) -> bool:
-        return bool(os.getenv(self.env_key))
+        return has_api_key(self.env_key)
 
     def info(self) -> ProviderInfo:
+        configured = self.is_configured()
         return ProviderInfo(
             id=self.id,
             name=self.name,
             env_key=self.env_key,
             models=self.models,
             default_model=self.default_model,
-            configured=self.is_configured(),
+            configured=configured,
         )
 
     @abstractmethod
@@ -79,7 +81,10 @@ class OpenAIProvider(LLMProvider):
     models = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
 
     def _client(self) -> AsyncOpenAI:
-        return AsyncOpenAI(api_key=os.getenv(self.env_key))
+        key = get_api_key(self.env_key)
+        if not key:
+            raise RuntimeError(f"{self.env_key} not set")
+        return AsyncOpenAI(api_key=key)
 
     async def complete(self, messages, *, model=None, temperature=0.4, max_tokens=None, json_mode=False, tools=None):
         kwargs: dict[str, Any] = {
@@ -124,8 +129,11 @@ class PerplexityProvider(LLMProvider):
     models = ["sonar", "sonar-pro", "sonar-reasoning-pro"]
 
     def _client(self) -> AsyncOpenAI:
+        key = get_api_key(self.env_key)
+        if not key:
+            raise RuntimeError(f"{self.env_key} not set")
         return AsyncOpenAI(
-            api_key=os.getenv(self.env_key),
+            api_key=key,
             base_url="https://api.perplexity.ai",
         )
 
@@ -175,7 +183,10 @@ class AnthropicProvider(LLMProvider):
         except ImportError as e:
             raise RuntimeError("Install anthropic: pip install anthropic") from e
 
-        client = AsyncAnthropic(api_key=os.getenv(self.env_key))
+        key = get_api_key(self.env_key)
+        if not key:
+            raise RuntimeError(f"{self.env_key} not set")
+        client = AsyncAnthropic(api_key=key)
         system = next((m.content for m in messages if m.role == "system"), "")
         user_messages = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
 
@@ -200,7 +211,10 @@ class AnthropicProvider(LLMProvider):
         except ImportError as e:
             raise RuntimeError("Install anthropic: pip install anthropic") from e
 
-        client = AsyncAnthropic(api_key=os.getenv(self.env_key))
+        key = get_api_key(self.env_key)
+        if not key:
+            raise RuntimeError(f"{self.env_key} not set")
+        client = AsyncAnthropic(api_key=key)
         system = next((m.content for m in messages if m.role == "system"), "")
         user_messages = [{"role": m.role, "content": m.content} for m in messages if m.role != "system"]
 

@@ -1,5 +1,6 @@
 import type { ChatMessage, ColumnProposal, Enricher, LeadRecord, Provider, ProviderSettings } from './types'
 import type { SavedTable, TableMeta } from './persistence/localTables'
+import { apiKeyHeaders } from './keys'
 
 const API = '/api'
 
@@ -11,31 +12,39 @@ export type EnrichOptions = {
   rowIds?: string[]
 }
 
+function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  for (const [key, value] of Object.entries(apiKeyHeaders())) {
+    headers.set(key, value)
+  }
+  return fetch(input, { ...init, headers })
+}
+
 export async function fetchProviders(): Promise<Provider[]> {
-  const res = await fetch(`${API}/providers`)
+  const res = await apiFetch(`${API}/providers`)
   return res.json()
 }
 
 export async function fetchEnrichers(): Promise<Enricher[]> {
-  const res = await fetch(`${API}/enrichers`)
+  const res = await apiFetch(`${API}/enrichers`)
   return res.json()
 }
 
 export async function uploadCsv(file: File): Promise<{ records: LeadRecord[]; count: number }> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${API}/upload`, { method: 'POST', body: form })
+  const res = await apiFetch(`${API}/upload`, { method: 'POST', body: form })
   if (!res.ok) throw new Error('Upload failed')
   return res.json()
 }
 
 export async function loadSample(): Promise<{ records: LeadRecord[]; count: number }> {
-  const res = await fetch(`${API}/sample`)
+  const res = await apiFetch(`${API}/sample`)
   return res.json()
 }
 
 export async function exportCsv(records: LeadRecord[]): Promise<Blob> {
-  const res = await fetch(`${API}/export`, {
+  const res = await apiFetch(`${API}/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ records }),
@@ -49,7 +58,7 @@ export async function streamEnrich(
   onEvent: (data: Record<string, unknown>) => void,
   options: EnrichOptions = {},
 ): Promise<LeadRecord[]> {
-  const res = await fetch(`${API}/enrich/stream`, {
+  const res = await apiFetch(`${API}/enrich/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -92,7 +101,7 @@ export async function streamChat(
   onEvent: (data: Record<string, unknown>) => void,
   settings?: ProviderSettings,
 ): Promise<LeadRecord[] | null> {
-  const res = await fetch(`${API}/chat/stream`, {
+  const res = await apiFetch(`${API}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -134,7 +143,7 @@ export async function streamSculptor(
   settings?: ProviderSettings,
   businessContext?: string,
 ): Promise<{ proposals: ColumnProposal[]; records: LeadRecord[] }> {
-  const res = await fetch(`${API}/sculptor/stream`, {
+  const res = await apiFetch(`${API}/sculptor/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -174,7 +183,7 @@ export async function streamSculptor(
 
 export async function fetchTables(): Promise<TableMeta[]> {
   try {
-    const res = await fetch(`${API}/tables`)
+    const res = await apiFetch(`${API}/tables`)
     if (!res.ok) throw new Error('failed')
     const data = await res.json()
     return data.tables as TableMeta[]
@@ -185,7 +194,7 @@ export async function fetchTables(): Promise<TableMeta[]> {
 
 export async function fetchTable(id: string): Promise<SavedTable | null> {
   try {
-    const res = await fetch(`${API}/tables/${id}`)
+    const res = await apiFetch(`${API}/tables/${id}`)
     if (!res.ok) return null
     return res.json()
   } catch {
@@ -197,7 +206,7 @@ export async function saveTableRemote(table: SavedTable): Promise<SavedTable | n
   try {
     const method = table.id ? 'PUT' : 'POST'
     const url = table.id ? `${API}/tables/${table.id}` : `${API}/tables`
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(table),
@@ -211,7 +220,7 @@ export async function saveTableRemote(table: SavedTable): Promise<SavedTable | n
 
 export async function deleteTableRemote(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API}/tables/${id}`, { method: 'DELETE' })
+    const res = await apiFetch(`${API}/tables/${id}`, { method: 'DELETE' })
     return res.ok
   } catch {
     return false

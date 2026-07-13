@@ -9,6 +9,8 @@ from pathlib import Path
 import httpx
 from geopy.geocoders import Nominatim
 
+from claycomp.keys import get_api_key
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 
 
@@ -56,7 +58,7 @@ async def google_places_search(
     place_type: str | None = None,
 ) -> list[dict]:
     """Search Google Places (New) API. Returns [] if no API key."""
-    api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+    api_key = get_api_key("GOOGLE_PLACES_API_KEY")
     if not api_key:
         return []
 

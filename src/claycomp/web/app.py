@@ -28,6 +28,8 @@ from claycomp.web.schemas import (
     record_to_dto,
 )
 from claycomp.web.sculptor import stream_sculptor
+from claycomp.web.middleware import ApiKeysMiddleware
+
 from claycomp.storage.tables import get_table_store
 
 # Local dev: serve built frontend from frontend/dist
@@ -41,6 +43,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ApiKeysMiddleware)
 
 
 @app.get("/api/health")
