@@ -45,6 +45,7 @@ export type EnrichmentColumn = {
   provider?: string
   model?: string
   running?: boolean
+  preview?: boolean
 }
 
 export type ColumnProposal = {
