@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Download,
   FlaskConical,
@@ -14,22 +14,15 @@ import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
 import SculptorPanel from './SculptorPanel'
 import TableSwitcher from './TableSwitcher'
-import type { Enricher, EnrichmentColumn, LeadRecord } from '../types'
-import { columnOutputKey, displayLocation, displayName, formatCell } from '../types'
-
-const SOURCE_COLUMNS = [
-  { key: 'name', label: 'Name', get: (r: LeadRecord) => displayName(r) },
-  { key: 'email', label: 'Email', get: (r: LeadRecord) => r.email },
-  { key: 'title', label: 'Title', get: (r: LeadRecord) => r.title },
-  { key: 'company', label: 'Company', get: (r: LeadRecord) => r.company },
-  { key: 'location', label: 'Location', get: (r: LeadRecord) => displayLocation(r) },
-]
+import type { Enricher, EnrichmentColumn } from '../types'
+import { columnOutputKey, formatCell, sourceColumnsFromRecords } from '../types'
 
 const SANDBOX_ROWS = 3
 
 export default function TableMode() {
   const { settings } = useSettings()
   const { records, columns, enrichers, setRecords, setColumns } = useTable()
+  const sourceColumns = useMemo(() => sourceColumnsFromRecords(records), [records])
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [showSculptor, setShowSculptor] = useState(true)
   const [runningCol, setRunningCol] = useState<string | null>(null)
@@ -144,7 +137,9 @@ export default function TableMode() {
       <div className="flex-1 flex flex-col min-w-0 bg-[#fafafa]">
         <div className="h-12 shrink-0 border-b border-slate-200/60 bg-white flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-600">{records.length} rows</span>
+            <span className="text-sm text-slate-600">
+              {records.length} rows · {sourceColumns.length} columns
+            </span>
             {progress && (
               <span className="text-xs text-clay-600 bg-clay-50 px-2 py-0.5 rounded-full flex items-center gap-1">
                 {progress.mode === 'sandbox' && <FlaskConical className="w-3 h-3" />}
@@ -190,7 +185,7 @@ export default function TableMode() {
             <thead className="sticky top-0 z-10">
               <tr className="bg-white border-b border-slate-200">
                 <th className="w-10 px-3 py-2.5 text-left text-[11px] font-medium text-slate-400 border-r border-slate-100">#</th>
-                {SOURCE_COLUMNS.map((col) => (
+                {sourceColumns.map((col) => (
                   <th key={col.key} className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-r border-slate-100 min-w-[140px] bg-slate-50/50">
                     {col.label}
                   </th>
@@ -220,7 +215,7 @@ export default function TableMode() {
               {records.map((row, i) => (
                 <tr key={`${row.id}-${i}`} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''}`}>
                   <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">{i + 1}</td>
-                  {SOURCE_COLUMNS.map((col) => (
+                  {sourceColumns.map((col) => (
                     <td key={col.key} className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]">
                       {col.get(row) || <span className="text-slate-300">—</span>}
                     </td>

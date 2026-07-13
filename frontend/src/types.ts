@@ -130,3 +130,45 @@ export function columnOutputKey(col: EnrichmentColumn, enrichers: Enricher[]): s
   const e = enrichers.find((x) => x.key === col.enricherKey)
   return e?.name || col.label
 }
+
+export type SourceColumn = {
+  key: string
+  label: string
+  get: (r: LeadRecord) => string | null | undefined
+}
+
+const DEFAULT_SOURCE_COLUMNS: SourceColumn[] = [
+  { key: 'name', label: 'Name', get: (r) => displayName(r) },
+  { key: 'email', label: 'Email', get: (r) => r.email },
+  { key: 'title', label: 'Title', get: (r) => r.title },
+  { key: 'company', label: 'Company', get: (r) => r.company },
+  { key: 'location', label: 'Location', get: (r) => displayLocation(r) },
+]
+
+/** All CSV columns from imported data, preserving header order. */
+export function sourceColumnsFromRecords(records: LeadRecord[]): SourceColumn[] {
+  if (!records.length) return DEFAULT_SOURCE_COLUMNS
+
+  const ordered: string[] = []
+  const seen = new Set<string>()
+  for (const key of Object.keys(records[0].raw)) {
+    ordered.push(key)
+    seen.add(key)
+  }
+  for (const record of records) {
+    for (const key of Object.keys(record.raw)) {
+      if (!seen.has(key)) {
+        ordered.push(key)
+        seen.add(key)
+      }
+    }
+  }
+
+  if (!ordered.length) return DEFAULT_SOURCE_COLUMNS
+
+  return ordered.map((key) => ({
+    key,
+    label: key,
+    get: (r) => r.raw[key] ?? null,
+  }))
+}

@@ -177,7 +177,8 @@ def list_enrichers():
 async def upload_csv(file: UploadFile = File(...)):
     data = await file.read()
     records = load_csv_bytes(data)
-    return {"records": records_to_dicts(records), "count": len(records)}
+    columns = list(records[0].raw.keys()) if records else []
+    return {"records": records_to_dicts(records), "count": len(records), "columns": columns}
 
 
 @app.get("/api/sample")
