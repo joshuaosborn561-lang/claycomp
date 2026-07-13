@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator
 
 from claycomp.enrichers import get_enricher
 from claycomp.llm import LLMMessage, llm_stream
+from claycomp.llm.errors import format_llm_error
 from claycomp.models import Record
 from claycomp.web.schemas import ChatMessage, RecordDTO, dto_to_record, record_to_dto
 
@@ -73,7 +74,7 @@ async def stream_chat(
         async for token in llm_stream(openai_messages, provider=provider, model=model, temperature=0.6):
             yield _sse({"type": "token", "content": token})
     except Exception as e:
-        yield _sse({"type": "token", "content": f"Error: {e}. Check your API key in .env"})
+        yield _sse({"type": "token", "content": format_llm_error(e, provider=provider)})
 
     yield _sse({"type": "done"})
 

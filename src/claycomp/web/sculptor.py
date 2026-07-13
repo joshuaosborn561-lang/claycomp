@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator
 
 from claycomp.enrichers import ENRICHERS, get_enricher
 from claycomp.llm import LLMMessage, llm_complete, llm_stream
+from claycomp.llm.errors import format_llm_error
 from claycomp.web.sculptor_analytics import analyze_table, estimate_credits
 from claycomp.web.schemas import ChatMessage, RecordDTO, dto_to_record, record_to_dto
 
@@ -378,7 +379,7 @@ async def stream_sculptor(
                 tools=SCULPTOR_TOOLS,
             )
         except Exception as e:
-            yield _sse({"type": "token", "content": f"Error: {e}"})
+            yield _sse({"type": "token", "content": format_llm_error(e, provider=provider)})
             yield _sse({"type": "done"})
             return
 
@@ -424,7 +425,7 @@ async def _stream_without_tools(
             content += token
             yield _sse({"type": "token", "content": token})
     except Exception as e:
-        yield _sse({"type": "token", "content": f"Error: {e}"})
+        yield _sse({"type": "token", "content": format_llm_error(e, provider=provider)})
         yield _sse({"type": "done"})
         return
 
