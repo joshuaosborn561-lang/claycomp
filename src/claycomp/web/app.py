@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,7 @@ from claycomp.web.schemas import (
 )
 from claycomp.storage.api_keys import API_KEY_NAMES, get_api_key_store, mask_api_key
 from claycomp.web.sculptor import stream_sculptor
+from claycomp.keys import bind_api_keys
 from claycomp.web.middleware import ApiKeysMiddleware
 
 from claycomp.storage.tables import get_table_store
@@ -167,7 +168,7 @@ def export_csv(body: dict):
 
 
 @app.post("/api/enrich/stream")
-async def enrich_stream(req: EnrichRequest):
+async def enrich_stream(req: EnrichRequest, request: Request):
     enricher = get_enricher(
         req.enricher,
         provider=req.provider,
@@ -182,7 +183,10 @@ async def enrich_stream(req: EnrichRequest):
     else:
         targets = records
 
+    keys_header = request.headers.get("x-claycomp-keys", "")
+
     async def generate() -> AsyncIterator[str]:
+        await bind_api_keys(keys_header)
         total = len(targets)
         sem = asyncio.Semaphore(5)
 
@@ -221,8 +225,11 @@ async def enrich_stream(req: EnrichRequest):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, request: Request):
+    keys_header = request.headers.get("x-claycomp-keys", "")
+
     async def generate() -> AsyncIterator[str]:
+        await bind_api_keys(keys_header)
         async for event in stream_chat(req.messages, req.records, provider=req.provider, model=req.model):
             yield event
 
@@ -230,8 +237,11 @@ async def chat_stream(req: ChatRequest):
 
 
 @app.post("/api/sculptor/stream")
-async def sculptor_stream(req: SculptorRequest):
+async def sculptor_stream(req: SculptorRequest, request: Request):
+    keys_header = request.headers.get("x-claycomp-keys", "")
+
     async def generate() -> AsyncIterator[str]:
+        await bind_api_keys(keys_header)
         async for event in stream_sculptor(
             req.messages,
             req.records,
