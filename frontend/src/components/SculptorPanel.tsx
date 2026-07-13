@@ -31,22 +31,41 @@ const STARTERS = [
   'Analyze my table — who should I prioritize?',
   'Build a full enrichment workflow for personalization',
   'Draft email openers for my top 3 leads',
-  'Run sandbox: normalize names + find baseball teams',
+  'Run test: normalize names + find baseball teams',
   'Diagnose my table for issues',
 ]
+
+function topicFromText(text: string): string | null {
+  const blob = text.toLowerCase()
+  const order = ['location', 'title', 'restaurant', 'review', 'baseball', 'area', 'name', 'company', 'email'] as const
+  const keywords: Record<string, string[]> = {
+    location: ['location', 'city', 'state', 'address', 'where', 'lives', 'geograph', 'region'],
+    title: ['job title', 'title', 'role', 'position'],
+    restaurant: ['restaurant', 'dining', 'food', 'nearby'],
+    review: ['google review', 'review', 'rating'],
+    baseball: ['baseball', 'mlb', 'team'],
+    area: ['area nickname', 'neighborhood', 'nickname'],
+    name: ['normalize name', 'name normalizer', 'normalize'],
+    company: ['company', 'employer', 'organization'],
+    email: ['email'],
+  }
+  for (const topic of order) {
+    for (const kw of [...keywords[topic]].sort((a, b) => b.length - a.length)) {
+      if (blob.includes(kw)) return topic
+    }
+  }
+  return null
+}
 
 function proposalTopic(p: ColumnProposal): string {
   const enricher = p.enricher_key
   if (enricher && enricher !== 'custom') return enricher
-  const blob = `${p.label} ${p.column_name || ''} ${p.custom_prompt || ''} ${p.reasoning || ''}`.toLowerCase()
-  if (/location|city|state|address|where|lives|geograph|region/.test(blob)) return 'location'
-  if (/title|job title|role|position/.test(blob)) return 'title'
-  if (/restaurant|dining|food|nearby/.test(blob)) return 'restaurant'
-  if (/review|rating/.test(blob)) return 'review'
-  if (/name|normalize/.test(blob)) return 'name'
-  if (/area|nickname|neighborhood/.test(blob)) return 'area'
-  if (/baseball|team|mlb/.test(blob)) return 'baseball'
-  return `custom:${blob.trim().slice(0, 48) || 'misc'}`
+  const labelBlob = `${p.label} ${p.column_name || ''}`
+  const labelTopic = topicFromText(labelBlob)
+  if (labelTopic) return labelTopic
+  const promptTopic = topicFromText(`${p.custom_prompt || ''} ${p.reasoning || ''}`)
+  if (promptTopic) return promptTopic
+  return `custom:${labelBlob.toLowerCase().trim().slice(0, 48) || 'misc'}`
 }
 
 function proposalKey(p: ColumnProposal): string {
@@ -67,7 +86,7 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
       id: 'welcome',
       role: 'assistant',
       content:
-        "I'm **Sculptor** — your GTM co-pilot. I can recommend enrichments, build workflows, analyze your data, draft outreach, run sandbox tests, and troubleshoot — like Clay.\n\nSet your **business context** below so I tailor everything to your ICP.",
+        "I'm **Sculptor** — your GTM co-pilot. I can recommend enrichments, build workflows, analyze your data, draft outreach, run tests, and troubleshoot — like Clay.\n\nSet your **business context** below so I tailor everything to your ICP.",
     },
   ])
   const [input, setInput] = useState('')
@@ -202,13 +221,13 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
           }
           if (event.type === 'cost_estimate') {
             const est = event.estimate as { estimated_ai_calls: number; sandbox_cost: number }
-            setCostNote(`${event.summary} (~${est.estimated_ai_calls} AI calls, sandbox: ${est.sandbox_cost})`)
+            setCostNote(`${event.summary} (~${est.estimated_ai_calls} AI calls, test: ${est.sandbox_cost})`)
           }
           if (event.type === 'records') {
             setRecords(event.records as LeadRecord[])
           }
           if (event.type === 'sandbox_complete') {
-            content += `\n\n✓ Sandbox complete for **${event.label}** — check rows 1–3 in your table.`
+            content += `\n\n✓ Test complete for **${event.label}** — check rows 1–10 in your table.`
             setStreamBuffer(content)
           }
         },
@@ -453,7 +472,7 @@ function ProposalCard({
             onClick={onSandbox}
             className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-clay-300"
           >
-            <FlaskConical className="w-3 h-3" /> Sandbox
+            <FlaskConical className="w-3 h-3" /> Test
           </button>
           <button
             type="button"

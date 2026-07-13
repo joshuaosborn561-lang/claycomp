@@ -60,6 +60,6 @@ def estimate_credits(records: list[RecordDTO], column_count: int = 1) -> dict[st
         "rows": rows,
         "columns": column_count,
         "estimated_ai_calls": ai_cells,
-        "sandbox_cost": min(3, rows) * column_count,
-        "note": "Sandbox uses 3 rows. Non-AI enrichers (baseball) are free.",
+        "sandbox_cost": min(10, rows) * column_count,
+        "note": "Test runs use 10 rows. Non-AI enrichers (baseball) are free.",
     }
