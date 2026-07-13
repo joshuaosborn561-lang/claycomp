@@ -35,8 +35,22 @@ const STARTERS = [
   'Diagnose my table for issues',
 ]
 
+function proposalTopic(p: ColumnProposal): string {
+  const enricher = p.enricher_key
+  if (enricher && enricher !== 'custom') return enricher
+  const blob = `${p.label} ${p.column_name || ''} ${p.custom_prompt || ''} ${p.reasoning || ''}`.toLowerCase()
+  if (/location|city|state|address|where|lives|geograph|region/.test(blob)) return 'location'
+  if (/title|job title|role|position/.test(blob)) return 'title'
+  if (/restaurant|dining|food|nearby/.test(blob)) return 'restaurant'
+  if (/review|rating/.test(blob)) return 'review'
+  if (/name|normalize/.test(blob)) return 'name'
+  if (/area|nickname|neighborhood/.test(blob)) return 'area'
+  if (/baseball|team|mlb/.test(blob)) return 'baseball'
+  return `custom:${blob.trim().slice(0, 48) || 'misc'}`
+}
+
 function proposalKey(p: ColumnProposal): string {
-  return `${p.enricher_key}::${(p.column_name || p.label).toLowerCase()}`
+  return proposalTopic(p)
 }
 
 type Props = {
@@ -93,12 +107,32 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
     setAppliedProposalKeys(new Set())
   }
 
-  const columnAlreadyExists = (p: ColumnProposal) =>
-    columns.some(
-      (c) =>
-        c.label.toLowerCase() === p.label.toLowerCase() ||
-        (p.column_name && c.columnName?.toLowerCase() === p.column_name.toLowerCase()),
+  const columnAlreadyExists = (p: ColumnProposal) => {
+    const topic = proposalTopic(p)
+    if (
+      columns.some((c) => {
+        const blob = `${c.label} ${c.columnName || ''} ${c.customPrompt || ''}`.toLowerCase()
+        if (c.enricherKey !== 'custom') return c.enricherKey === topic
+        if (topic === 'location' && /location|city|state/.test(blob)) return true
+        if (topic === 'title' && /title|role/.test(blob)) return true
+        return proposalTopic({
+          enricher_key: c.enricherKey,
+          label: c.label,
+          column_name: c.columnName || '',
+          custom_prompt: c.customPrompt || '',
+        }) === topic
+      })
+    ) {
+      return true
+    }
+    return (
+      columns.some(
+        (c) =>
+          c.label.toLowerCase() === p.label.toLowerCase() ||
+          (p.column_name && c.columnName?.toLowerCase() === p.column_name.toLowerCase()),
+      )
     )
+  }
 
   const handleApplyProposal = (p: ColumnProposal) => {
     const key = proposalKey(p)
