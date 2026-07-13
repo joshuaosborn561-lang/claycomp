@@ -351,13 +351,29 @@ FALLBACK_PROPOSALS: dict[str, dict[str, str]] = {
 }
 
 
+TOPIC_FUZZY_PATTERNS: dict[str, re.Pattern[str]] = {
+    "location": re.compile(r"loca?ti?on|locaiton|locaton|geograph|where\s+.+\s+lives", re.I),
+    "title": re.compile(r"\btitle\b|\bjob\s+title\b|\brole\b|\bposition\b", re.I),
+}
+
+
 def _topic_from_text(text: str) -> str | None:
     text_l = text.lower()
+    for topic, pattern in TOPIC_FUZZY_PATTERNS.items():
+        if pattern.search(text_l):
+            return topic
     for topic in TOPIC_MATCH_ORDER:
         for kw in sorted(TOPIC_KEYWORDS[topic], key=len, reverse=True):
             if kw in text_l:
                 return topic
     return None
+
+
+def _infer_topic_from_message(text: str) -> str | None:
+    topic = _extract_primary_topic(text)
+    if topic:
+        return topic
+    return _topic_from_text(text)
 
 
 def _proposal_topic(args: dict) -> str:
@@ -399,8 +415,8 @@ def _column_config_topic(col: dict) -> str:
 def _extract_primary_topic(text: str) -> str | None:
     text_l = text.lower()
     for pattern in (
-        r"(?:try to )?(?:fill in|populate|enrich|complete|add)\s+(?:the\s+)?([\w\s]+?)(?:\s+for|\s+using|$|\.|,)",
-        r"(?:find|get|look up|lookup|search for)\s+(?:the\s+)?([\w\s]+?)(?:\s+for|\s+using|$|\.|,)",
+        r"(?:try to )?(?:fill in|populate|enrich|complete|add)\s+(?:the\s+)?(?:a\s+)?([\w\s]+?)(?:\s+for|\s+using|$|\.|,)",
+        r"(?:try to )?(?:find|get|look up|lookup|search for)\s+(?:the\s+)?(?:a\s+)?([\w\s]+?)(?:\s+for|\s+using|$|\.|,)",
     ):
         match = re.search(pattern, text_l)
         if not match:
@@ -409,7 +425,7 @@ def _extract_primary_topic(text: str) -> str | None:
         topic = _topic_from_text(phrase)
         if topic:
             return topic
-    return None
+    return _topic_from_text(text)
 
 
 def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
@@ -417,16 +433,18 @@ def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
     text = last.lower()
     specific_verbs = (
         "fill in", "look up", "lookup", "find", "get", "add", "figure out",
-        "populate", "enrich", "search for", "try to fill",
+        "populate", "enrich", "search for", "try to fill", "try to find",
     )
-    primary_topic = _extract_primary_topic(last)
-    contextual_topics = {"name", "company"}
+    primary_topic = _infer_topic_from_message(last)
+    contextual_topics = {"name", "company", "email"}
     salient_topics = [
         t for t, kws in TOPIC_KEYWORDS.items()
         if t not in contextual_topics and any(kw in text for kw in kws)
     ]
-    if not primary_topic and any(v in text for v in specific_verbs) and len(salient_topics) == 1:
-        primary_topic = salient_topics[0]
+    if not primary_topic and any(v in text for v in specific_verbs):
+        non_context = [t for t in salient_topics if t not in contextual_topics]
+        if len(non_context) == 1:
+            primary_topic = non_context[0]
     is_specific = primary_topic is not None
     is_workflow = any(w in text for w in ("workflow", "full enrichment", "build a", "all enrichments"))
     cap = 1
@@ -481,11 +499,16 @@ def _finalize_proposals(
     proposal_gate: _ProposalGate,
     intent: dict[str, Any],
     columns: list[dict],
+    messages: list[ChatMessage] | None = None,
 ) -> list[dict[str, Any]]:
     if proposal_gate.emitted > 0:
         return []
 
     primary = intent.get("primary_topic")
+    if not primary and messages:
+        last = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        primary = _infer_topic_from_message(last)
+
     if primary:
         existing = _existing_column_label(columns, primary)
         if existing:
@@ -493,7 +516,7 @@ def _finalize_proposals(
                 "type": "token",
                 "content": (
                     f"\n\nYou already have a **{existing}** column — scroll right in the table "
-                    "and click the play button to run it."
+                    "and click the play button to run it, or delete the duplicate columns you don't need."
                 ),
             }]
 
@@ -503,7 +526,10 @@ def _finalize_proposals(
 
     return [{
         "type": "token",
-        "content": "\n\nI couldn't build a column proposal. Use the **+** button to add a Custom AI column.",
+        "content": (
+            "\n\nI couldn't build a column proposal. Try rephrasing your request, "
+            "or use the **+** button to add a Custom AI column."
+        ),
     }]
 
 
@@ -622,7 +648,7 @@ async def stream_sculptor(
                         records = [RecordDTO.model_validate(r) for r in payload["records"]]
 
             if all(call.name in PROPOSAL_TOOL_NAMES for call in result.tool_calls):
-                for payload in _finalize_proposals(proposal_gate, intent, columns):
+                for payload in _finalize_proposals(proposal_gate, intent, columns, messages):
                     yield _sse(payload)
                 if result.content:
                     yield _sse({"type": "token", "content": result.content})
@@ -642,6 +668,9 @@ async def stream_sculptor(
         if result.content:
             yield _sse({"type": "token", "content": result.content})
         break
+
+    for payload in _finalize_proposals(proposal_gate, intent, columns, messages):
+        yield _sse(payload)
 
     yield _sse({"type": "done"})
 
