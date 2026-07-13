@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { LayoutGrid, MessageSquare, Settings, Sparkles } from 'lucide-react'
 import ChatMode from './components/ChatMode'
 import SettingsModal from './components/SettingsModal'
+import StopBar from './components/StopBar'
 import TableMode from './components/TableMode'
+import { JobsProvider } from './context/JobsContext'
 import { SettingsProvider, useSettings } from './context/SettingsContext'
 import { TableProvider, useTable } from './context/TableContext'
 import type { AppMode } from './types'
@@ -61,6 +63,7 @@ function AppContent() {
         {mode === 'table' ? <TableMode /> : <ChatMode />}
       </main>
 
+      <StopBar />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
@@ -69,9 +72,11 @@ function AppContent() {
 export default function App() {
   return (
     <SettingsProvider>
-      <TableProvider>
-        <AppContent />
-      </TableProvider>
+      <JobsProvider>
+        <TableProvider>
+          <AppContent />
+        </TableProvider>
+      </JobsProvider>
     </SettingsProvider>
   )
 }

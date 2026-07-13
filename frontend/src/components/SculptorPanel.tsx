@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { streamSculptor } from '../api'
+import { isAbortError, useJobs } from '../context/JobsContext'
 import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
 import type {
@@ -23,7 +24,6 @@ import type {
   OutreachDraft,
   TableAnalysis,
   WorkflowProposal,
-  LeadRecord,
 } from '../types'
 
 const STARTERS = [
@@ -75,12 +75,14 @@ function proposalKey(p: ColumnProposal): string {
 type Props = {
   onAddColumn: (col: EnrichmentColumn) => void
   onApplyWorkflow: (steps: EnrichmentColumn[]) => void
-  onSandbox: (col: EnrichmentColumn) => void
+  onTest: (col: EnrichmentColumn) => void
+  onClearPreview?: () => void
 }
 
-export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox }: Props) {
+export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, onClearPreview }: Props) {
   const { settings } = useSettings()
-  const { records, columns, businessContext, setRecords, setBusinessContext } = useTable()
+  const { track } = useJobs()
+  const { records, columns, businessContext, setBusinessContext } = useTable()
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -155,18 +157,15 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
 
   const handleApplyProposal = (p: ColumnProposal) => {
     const key = proposalKey(p)
-    if (appliedProposalKeys.has(key) || columnAlreadyExists(p)) {
-      setProposals((prev) => prev.filter((x) => proposalKey(x) !== key))
-      return
-    }
+    if (appliedProposalKeys.has(key)) return
+    if (columnAlreadyExists(p)) return
     onAddColumn(proposalToColumn(p))
     setAppliedProposalKeys((prev) => new Set(prev).add(key))
     setProposals((prev) => prev.filter((x) => proposalKey(x) !== key))
   }
 
-  const handleSandboxProposal = (p: ColumnProposal) => {
-    onSandbox(proposalToColumn(p))
-    setAppliedProposalKeys((prev) => new Set(prev).add(proposalKey(p)))
+  const handleTestProposal = (p: ColumnProposal) => {
+    onTest(proposalToColumn(p))
   }
 
   const send = async (text: string) => {
@@ -180,71 +179,76 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
     setStreamBuffer('')
     clearArtifacts()
 
+    clearArtifacts()
+    onClearPreview?.()
+
     let content = ''
     const newProposals: ColumnProposal[] = []
 
     try {
-      const { records: updated } = await streamSculptor(
-        nextMessages,
-        records,
-        columns.map((c) => ({
-          enricherKey: c.enricherKey,
-          label: c.label,
-          customPrompt: c.customPrompt,
-          columnName: c.columnName,
-        })),
-        (event) => {
-          if (event.type === 'token') {
-            content += event.content as string
-            setStreamBuffer(content)
-          }
-          if (event.type === 'proposal') {
-            const p = event.proposal as ColumnProposal
-            const key = proposalKey(p)
-            if (!newProposals.some((x) => proposalKey(x) === key)) {
-              newProposals.push(p)
-              setProposals([...newProposals])
+      await track(async (signal) => {
+        await streamSculptor(
+          nextMessages,
+          records,
+          columns.map((c) => ({
+            enricherKey: c.enricherKey,
+            label: c.label,
+            customPrompt: c.customPrompt,
+            columnName: c.columnName,
+          })),
+          (event) => {
+            if (event.type === 'token') {
+              content += event.content as string
+              setStreamBuffer(content)
             }
-          }
-          if (event.type === 'workflow') {
-            const w = event.workflow as WorkflowProposal
-            setWorkflows((prev) => [...prev, w])
-          }
-          if (event.type === 'analysis') {
-            setAnalysis({ stats: event.stats as Record<string, unknown>, insights: event.insights as TableAnalysis['insights'] })
-          }
-          if (event.type === 'drafts') {
-            setDrafts(event.drafts as OutreachDraft[])
-          }
-          if (event.type === 'diagnosis') {
-            setDiagnosis(event.issues as DiagnosisIssue[])
-          }
-          if (event.type === 'cost_estimate') {
-            const est = event.estimate as { estimated_ai_calls: number; sandbox_cost: number }
-            setCostNote(`${event.summary} (~${est.estimated_ai_calls} AI calls, test: ${est.sandbox_cost})`)
-          }
-          if (event.type === 'records') {
-            setRecords(event.records as LeadRecord[])
-          }
-          if (event.type === 'sandbox_complete') {
-            content += `\n\n✓ Test complete for **${event.label}** — check rows 1–10 in your table.`
-            setStreamBuffer(content)
-          }
-        },
-        settings,
-        businessContext,
-      )
+            if (event.type === 'proposal') {
+              const p = event.proposal as ColumnProposal
+              const key = proposalKey(p)
+              if (!newProposals.some((x) => proposalKey(x) === key)) {
+                newProposals.push(p)
+                setProposals([...newProposals])
+              }
+            }
+            if (event.type === 'workflow') {
+              const w = event.workflow as WorkflowProposal
+              setWorkflows((prev) => [...prev, w])
+            }
+            if (event.type === 'analysis') {
+              setAnalysis({ stats: event.stats as Record<string, unknown>, insights: event.insights as TableAnalysis['insights'] })
+            }
+            if (event.type === 'drafts') {
+              setDrafts(event.drafts as OutreachDraft[])
+            }
+            if (event.type === 'diagnosis') {
+              setDiagnosis(event.issues as DiagnosisIssue[])
+            }
+            if (event.type === 'cost_estimate') {
+              const est = event.estimate as { estimated_ai_calls: number; sandbox_cost: number }
+              setCostNote(`${event.summary} (~${est.estimated_ai_calls} AI calls, test: ${est.sandbox_cost})`)
+            }
+          },
+          settings,
+          businessContext,
+          signal,
+        )
+      })
 
-      setRecords(updated)
       setMessages((m) => [
         ...m,
         { id: `a-${Date.now()}`, role: 'assistant', content: content || 'Done.', proposals: newProposals.length ? newProposals : undefined },
       ])
-    } catch {
-      setMessages((m) => [
-        ...m,
-        { id: `a-${Date.now()}`, role: 'assistant', content: 'Something went wrong. Check your API key in Vercel settings.' },
-      ])
+    } catch (error) {
+      if (isAbortError(error)) {
+        setMessages((m) => [
+          ...m,
+          { id: `a-${Date.now()}`, role: 'assistant', content: 'Stopped.' },
+        ])
+      } else {
+        setMessages((m) => [
+          ...m,
+          { id: `a-${Date.now()}`, role: 'assistant', content: 'Something went wrong. Check your API key in Vercel settings.' },
+        ])
+      }
     } finally {
       setStreamBuffer('')
       setStreaming(false)
@@ -324,14 +328,16 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
 
         {proposals.map((p) => {
           const key = proposalKey(p)
-          const applied = appliedProposalKeys.has(key) || columnAlreadyExists(p)
+          const applied = appliedProposalKeys.has(key)
+          const alreadyInTable = columnAlreadyExists(p)
           return (
             <ProposalCard
               key={key}
               proposal={p}
               applied={applied}
+              alreadyInTable={alreadyInTable}
               onApply={() => handleApplyProposal(p)}
-              onSandbox={() => handleSandboxProposal(p)}
+              onTest={() => handleTestProposal(p)}
             />
           )
         })}
@@ -443,13 +449,15 @@ function SculptorMessage({ message, streaming }: { message: ChatMessage; streami
 function ProposalCard({
   proposal,
   applied,
+  alreadyInTable,
   onApply,
-  onSandbox,
+  onTest,
 }: {
   proposal: ColumnProposal
   applied?: boolean
+  alreadyInTable?: boolean
   onApply: () => void
-  onSandbox: () => void
+  onTest: () => void
 }) {
   return (
     <div className={`rounded-xl border p-3 space-y-2 animate-fade-in ${applied ? 'border-emerald-200 bg-emerald-50/50' : 'border-clay-200 bg-clay-50/50'}`}>
@@ -465,11 +473,13 @@ function ProposalCard({
       </div>
       {applied ? (
         <p className="text-[10px] text-emerald-600 font-medium">✓ Added to table — scroll right to see the column</p>
+      ) : alreadyInTable ? (
+        <p className="text-[10px] text-amber-600">Column already in table — scroll right and click play to run it.</p>
       ) : (
         <div className="flex gap-1.5">
           <button
             type="button"
-            onClick={onSandbox}
+            onClick={onTest}
             className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-clay-300"
           >
             <FlaskConical className="w-3 h-3" /> Test

@@ -10,6 +10,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { exportCsv, streamEnrich, uploadCsv } from '../api'
+import { isAbortError, useJobs } from '../context/JobsContext'
 import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
 import SculptorPanel from './SculptorPanel'
@@ -21,14 +22,22 @@ const TEST_ROWS = 10
 
 export default function TableMode() {
   const { settings } = useSettings()
+  const { track } = useJobs()
   const { records, columns, enrichers, setRecords, setColumns } = useTable()
   const sourceColumns = useMemo(() => sourceColumnsFromRecords(records), [records])
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [showSculptor, setShowSculptor] = useState(true)
+  const [previewColumn, setPreviewColumn] = useState<EnrichmentColumn | null>(null)
   const [runningCol, setRunningCol] = useState<string | null>(null)
   const [sandboxCol, setSandboxCol] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ done: number; total: number; mode?: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const displayColumns = useMemo(() => {
+    if (!previewColumn) return columns
+    if (columns.some((c) => c.id === previewColumn.id)) return columns
+    return [...columns, previewColumn]
+  }, [columns, previewColumn])
 
   const addColumn = (col: EnrichmentColumn) => {
     const exists = columns.some(
@@ -36,7 +45,8 @@ export default function TableMode() {
         c.label.toLowerCase() === col.label.toLowerCase() ||
         (col.columnName && c.columnName?.toLowerCase() === col.columnName.toLowerCase()),
     )
-    if (!exists) setColumns([...columns, col])
+    if (!exists) setColumns([...columns, { ...col, preview: undefined }])
+    setPreviewColumn(null)
     setShowAddMenu(false)
   }
 
@@ -62,36 +72,53 @@ export default function TableMode() {
     const updated = [...records]
     const outputKey = columnOutputKey(col, enrichers)
 
-    const result = await streamEnrich(
-      updated,
-      enricherKey,
-      (event) => {
-        if (event.type === 'progress' || event.type === 'error') {
-          setProgress({ done: event.done as number, total: event.total as number, mode: testRun ? 'test' : 'full' })
-          const idx = updated.findIndex((r) => r.id === event.row_id)
-          if (idx >= 0 && event.type === 'progress') {
-            const column = (event.column as string) || outputKey
-            updated[idx] = {
-              ...updated[idx],
-              enriched: { ...updated[idx].enriched, [column]: event.value },
+    try {
+      const result = await track((signal) =>
+        streamEnrich(
+          updated,
+          enricherKey,
+          (event) => {
+            if (event.type === 'progress' || event.type === 'error') {
+              setProgress({
+                done: event.done as number,
+                total: event.total as number,
+                mode: testRun ? 'test' : 'full',
+              })
+              const idx = updated.findIndex((r) => r.id === event.row_id)
+              if (idx >= 0 && event.type === 'progress') {
+                const column = (event.column as string) || outputKey
+                updated[idx] = {
+                  ...updated[idx],
+                  enriched: { ...updated[idx].enriched, [column]: event.value },
+                }
+                setRecords([...updated])
+              }
             }
-            setRecords([...updated])
-          }
-        }
-      },
-      {
-        provider: col.provider || settings.providerId,
-        model: col.model || settings.model,
-        customPrompt: col.customPrompt,
-        columnName: col.columnName || col.label,
-        rowIds,
-      },
-    )
+          },
+          {
+            provider: col.provider || settings.providerId,
+            model: col.model || settings.model,
+            customPrompt: col.customPrompt,
+            columnName: col.columnName || col.label,
+            rowIds,
+          },
+          signal,
+        ),
+      )
+      setRecords(result)
+    } catch (error) {
+      if (!isAbortError(error)) throw error
+    } finally {
+      setRunningCol(null)
+      setSandboxCol(null)
+      setProgress(null)
+    }
+  }
 
-    setRecords(result)
-    setRunningCol(null)
-    setSandboxCol(null)
-    setProgress(null)
+  const testProposal = (col: EnrichmentColumn) => {
+    const preview = { ...col, id: `preview-${Date.now()}`, preview: true }
+    setPreviewColumn(preview)
+    void runColumn(preview, true)
   }
 
   const handleUpload = async (file: File) => {
@@ -101,6 +128,7 @@ export default function TableMode() {
     }
     setRecords(next)
     setColumns([])
+    setPreviewColumn(null)
   }
 
   const handleExport = async () => {
@@ -195,21 +223,23 @@ export default function TableMode() {
                     {col.label}
                   </th>
                 ))}
-                {columns.map((col) => (
-                  <th key={col.id} className="px-3 py-2.5 text-left text-[11px] font-semibold text-clay-700 uppercase tracking-wide border-r border-clay-100 min-w-[160px] bg-clay-50/80">
+                {displayColumns.map((col) => (
+                  <th key={col.id} className={`px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide border-r min-w-[160px] ${col.preview ? 'text-amber-700 border-amber-100 bg-amber-50/80' : 'text-clay-700 border-clay-100 bg-clay-50/80'}`}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="flex items-center gap-1 truncate">
                         <Sparkles className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{col.label}</span>
+                        <span className="truncate">{col.label}{col.preview ? ' (test)' : ''}</span>
                       </span>
-                      <div className="flex shrink-0">
-                        <button onClick={() => runColumn(col, true)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title={`Test (${TEST_ROWS} rows)`}>
-                          <FlaskConical className="w-3 h-3" />
-                        </button>
-                        <button onClick={() => runColumn(col)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title="Run all rows">
-                          {runningCol === col.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                        </button>
-                      </div>
+                      {!col.preview && (
+                        <div className="flex shrink-0">
+                          <button onClick={() => runColumn(col, true)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title={`Test (${TEST_ROWS} rows)`}>
+                            <FlaskConical className="w-3 h-3" />
+                          </button>
+                          <button onClick={() => runColumn(col)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title="Run all rows">
+                            {runningCol === col.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </th>
                 ))}
@@ -225,7 +255,7 @@ export default function TableMode() {
                       {col.get(row) || <span className="text-slate-300">—</span>}
                     </td>
                   ))}
-                  {columns.map((col) => {
+                  {displayColumns.map((col) => {
                     const outputKey = columnOutputKey(col, enrichers)
                     const value = row.enriched[outputKey]
                     const isRunning = runningCol === col.id && value == null
@@ -258,10 +288,8 @@ export default function TableMode() {
         <SculptorPanel
           onAddColumn={addColumn}
           onApplyWorkflow={(steps) => { for (const col of steps) addColumn(col) }}
-          onSandbox={(col) => {
-            if (!columns.find((c) => c.id === col.id)) addColumn(col)
-            runColumn(col, true)
-          }}
+          onTest={testProposal}
+          onClearPreview={() => setPreviewColumn(null)}
         />
       )}
 

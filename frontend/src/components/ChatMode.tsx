@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Paperclip, Sparkles, Upload } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { loadSample, streamChat, uploadCsv } from '../api'
+import { isAbortError, useJobs } from '../context/JobsContext'
 import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
 import type { ChatMessage } from '../types'
@@ -17,6 +18,7 @@ type Props = Record<string, never>
 
 export default function ChatMode(_props: Props) {
   const { settings } = useSettings()
+  const { track } = useJobs()
   const { records, setRecords } = useTable()
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -50,17 +52,19 @@ export default function ChatMode(_props: Props) {
     let content = ''
 
     try {
-      const updated = await streamChat(nextMessages, records, (event) => {
-        if (event.type === 'token') {
-          content += event.content as string
-          setStreamBuffer(content)
-        }
-        if (event.type === 'enrichment') {
-          const line = `\n✓ **${event.name}**: ${event.preview}\n`
-          content += line
-          setStreamBuffer(content)
-        }
-      }, settings)
+      const updated = await track((signal) =>
+        streamChat(nextMessages, records, (event) => {
+          if (event.type === 'token') {
+            content += event.content as string
+            setStreamBuffer(content)
+          }
+          if (event.type === 'enrichment') {
+            const line = `\n✓ **${event.name}**: ${event.preview}\n`
+            content += line
+            setStreamBuffer(content)
+          }
+        }, settings, signal),
+      )
 
       if (updated) setRecords(updated)
 
@@ -68,11 +72,18 @@ export default function ChatMode(_props: Props) {
         ...m,
         { id: assistantId, role: 'assistant', content: content || 'Done.' },
       ])
-    } catch {
-      setMessages((m) => [
-        ...m,
-        { id: assistantId, role: 'assistant', content: 'Something went wrong. Check that the server is running.' },
-      ])
+    } catch (error) {
+      if (isAbortError(error)) {
+        setMessages((m) => [
+          ...m,
+          { id: assistantId, role: 'assistant', content: 'Stopped.' },
+        ])
+      } else {
+        setMessages((m) => [
+          ...m,
+          { id: assistantId, role: 'assistant', content: 'Something went wrong. Check that the server is running.' },
+        ])
+      }
     } finally {
       setStreamBuffer('')
       setStreaming(false)

@@ -16,6 +16,38 @@ function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return fetch(input, init)
 }
 
+async function readSseStream(
+  res: Response,
+  onEvent: (data: Record<string, unknown>) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!res.body) throw new Error('No response body')
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        await reader.cancel()
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        onEvent(JSON.parse(line.slice(6)))
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
 export async function fetchApiKeyStatus(): Promise<ApiKeysStatus> {
   try {
     const res = await apiFetch(`${API}/settings/keys`)
@@ -76,6 +108,7 @@ export async function streamEnrich(
   enricher: string,
   onEvent: (data: Record<string, unknown>) => void,
   options: EnrichOptions = {},
+  signal?: AbortSignal,
 ): Promise<LeadRecord[]> {
   const res = await apiFetch(`${API}/enrich/stream`, {
     method: 'POST',
@@ -89,28 +122,16 @@ export async function streamEnrich(
       column_name: options.columnName,
       row_ids: options.rowIds,
     }),
+    signal,
   })
 
   if (!res.ok || !res.body) throw new Error('Enrichment failed')
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
   let finalRecords = records
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = JSON.parse(line.slice(6))
-      onEvent(data)
-      if (data.type === 'complete') finalRecords = data.records
-    }
-  }
+  await readSseStream(res, (data) => {
+    onEvent(data)
+    if (data.type === 'complete') finalRecords = data.records as LeadRecord[]
+  }, signal)
   return finalRecords
 }
 
@@ -119,6 +140,7 @@ export async function streamChat(
   records: LeadRecord[],
   onEvent: (data: Record<string, unknown>) => void,
   settings?: ProviderSettings,
+  signal?: AbortSignal,
 ): Promise<LeadRecord[] | null> {
   const res = await apiFetch(`${API}/chat/stream`, {
     method: 'POST',
@@ -129,28 +151,16 @@ export async function streamChat(
       provider: settings?.providerId,
       model: settings?.model,
     }),
+    signal,
   })
 
   if (!res.ok || !res.body) throw new Error('Chat failed')
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
   let updatedRecords: LeadRecord[] | null = null
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = JSON.parse(line.slice(6))
-      onEvent(data)
-      if (data.type === 'records') updatedRecords = data.records
-    }
-  }
+  await readSseStream(res, (data) => {
+    onEvent(data)
+    if (data.type === 'records') updatedRecords = data.records as LeadRecord[]
+  }, signal)
   return updatedRecords
 }
 
@@ -161,6 +171,7 @@ export async function streamSculptor(
   onEvent: (data: Record<string, unknown>) => void,
   settings?: ProviderSettings,
   businessContext?: string,
+  signal?: AbortSignal,
 ): Promise<{ proposals: ColumnProposal[]; records: LeadRecord[] }> {
   const res = await apiFetch(`${API}/sculptor/stream`, {
     method: 'POST',
@@ -173,30 +184,18 @@ export async function streamSculptor(
       model: settings?.model,
       business_context: businessContext || null,
     }),
+    signal,
   })
 
   if (!res.ok || !res.body) throw new Error('Sculptor failed')
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
   const proposals: ColumnProposal[] = []
   let finalRecords = records
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = JSON.parse(line.slice(6))
-      onEvent(data)
-      if (data.type === 'proposal') proposals.push(data.proposal as ColumnProposal)
-      if (data.type === 'records') finalRecords = data.records as LeadRecord[]
-    }
-  }
+  await readSseStream(res, (data) => {
+    onEvent(data)
+    if (data.type === 'proposal') proposals.push(data.proposal as ColumnProposal)
+    if (data.type === 'records') finalRecords = data.records as LeadRecord[]
+  }, signal)
   return { proposals, records: finalRecords }
 }
 
