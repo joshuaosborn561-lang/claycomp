@@ -31,12 +31,12 @@ from claycomp.web.schemas import (
 )
 from claycomp.storage.api_keys import (
     API_KEY_NAMES,
-    STORAGE_SETUP_MESSAGE,
     StorageNotConfiguredError,
     get_api_key_store,
     mask_api_key,
 )
-from claycomp.storage.redis_config import storage_backend
+from claycomp.storage.config import STORAGE_SETUP_MESSAGE, storage_backend
+from claycomp.storage.supabase_client import SupabaseError
 from claycomp.web.sculptor import stream_sculptor
 from claycomp.keys import bind_api_keys
 from claycomp.web.middleware import ApiKeysMiddleware
@@ -86,7 +86,7 @@ async def save_api_keys(body: ApiKeysUpdate):
     store = get_api_key_store()
     try:
         saved = await store.save_keys(body.keys)
-    except StorageNotConfiguredError as e:
+    except (StorageNotConfiguredError, SupabaseError) as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     backend = storage_backend()
     return ApiKeysStatusDTO(
@@ -105,38 +105,53 @@ async def save_api_keys(body: ApiKeysUpdate):
 
 @app.get("/api/tables")
 async def list_tables():
-    store = get_table_store()
-    return {"tables": await store.list_tables()}
+    try:
+        store = get_table_store()
+        return {"tables": await store.list_tables()}
+    except SupabaseError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @app.get("/api/tables/{table_id}")
 async def get_table(table_id: str):
-    store = get_table_store()
-    table = await store.get_table(table_id)
-    if not table:
-        raise HTTPException(status_code=404, detail="Table not found")
-    return table
+    try:
+        store = get_table_store()
+        table = await store.get_table(table_id)
+        if not table:
+            raise HTTPException(status_code=404, detail="Table not found")
+        return table
+    except SupabaseError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @app.post("/api/tables")
 async def create_table(body: TableData):
-    store = get_table_store()
-    return await store.save_table(body.model_dump())
+    try:
+        store = get_table_store()
+        return await store.save_table(body.model_dump())
+    except SupabaseError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @app.put("/api/tables/{table_id}")
 async def update_table(table_id: str, body: TableData):
-    store = get_table_store()
-    data = body.model_dump()
-    data["id"] = table_id
-    return await store.save_table(data)
+    try:
+        store = get_table_store()
+        data = body.model_dump()
+        data["id"] = table_id
+        return await store.save_table(data)
+    except SupabaseError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @app.delete("/api/tables/{table_id}")
 async def delete_table(table_id: str):
-    store = get_table_store()
-    await store.delete_table(table_id)
-    return {"ok": True}
+    try:
+        store = get_table_store()
+        await store.delete_table(table_id)
+        return {"ok": True}
+    except SupabaseError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @app.get("/api/providers", response_model=list[ProviderInfoDTO])

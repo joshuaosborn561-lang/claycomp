@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import os
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 
-from claycomp.storage.redis_config import redis_configured, redis_credentials, storage_backend
+from claycomp.storage.config import STORAGE_SETUP_MESSAGE, redis_credentials, supabase_configured
+from claycomp.storage.supabase_client import SupabaseClient, SupabaseError
 
 API_KEY_NAMES = (
     "OPENAI_API_KEY",
@@ -17,11 +19,7 @@ API_KEY_NAMES = (
     "GOOGLE_PLACES_API_KEY",
 )
 
-STORAGE_SETUP_MESSAGE = (
-    "Durable storage is not configured on Vercel. In your Vercel project go to "
-    "Storage → Create Database → Redis (Upstash) → Connect to this project, then redeploy. "
-    "This only needs to be done once; API keys saved in Settings will persist permanently."
-)
+SETTINGS_ROW_ID = "api_keys"
 
 
 class StorageNotConfiguredError(RuntimeError):
@@ -72,6 +70,47 @@ class FileApiKeyStore(ApiKeyStore):
         return current
 
 
+class SupabaseApiKeyStore(ApiKeyStore):
+    TABLE = "claycomp_settings"
+
+    def __init__(self, client: SupabaseClient | None = None):
+        self.client = client or SupabaseClient.from_env()
+
+    async def get_keys(self) -> dict[str, str]:
+        rows = await self.client.select(
+            self.TABLE,
+            columns="keys",
+            filters={"id": f"eq.{SETTINGS_ROW_ID}"},
+            limit=1,
+        )
+        if not rows:
+            return {}
+        raw = rows[0].get("keys") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {k: str(v) for k, v in raw.items() if k in API_KEY_NAMES and v}
+
+    async def save_keys(self, updates: dict[str, str]) -> dict[str, str]:
+        current = await self.get_keys()
+        for name, value in updates.items():
+            if name not in API_KEY_NAMES:
+                continue
+            trimmed = value.strip()
+            if trimmed:
+                current[name] = trimmed
+            else:
+                current.pop(name, None)
+        await self.client.upsert(
+            self.TABLE,
+            {
+                "id": SETTINGS_ROW_ID,
+                "keys": current,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return current
+
+
 class UpstashApiKeyStore(ApiKeyStore):
     def __init__(self, url: str, token: str):
         self.url = url
@@ -118,6 +157,8 @@ class UnconfiguredVercelApiKeyStore(ApiKeyStore):
 
 
 def get_api_key_store() -> ApiKeyStore:
+    if supabase_configured():
+        return SupabaseApiKeyStore()
     creds = redis_credentials()
     if creds:
         return UpstashApiKeyStore(*creds)

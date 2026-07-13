@@ -75,8 +75,7 @@ export default function SettingsModal({ open, onClose }: Props) {
               </div>
             )}
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              Keys are saved on the server ({apiKeyStatus.storage}) and persist across sessions once
-              storage is configured.
+              Keys are saved on the server ({apiKeyStatus.storage}) and persist across sessions.
             </p>
             <div className="space-y-3">
               {API_KEY_FIELDS.map((field) => {

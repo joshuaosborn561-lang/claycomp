@@ -10,7 +10,8 @@ from typing import Any
 
 import httpx
 
-from claycomp.storage.redis_config import redis_credentials
+from claycomp.storage.config import redis_credentials, supabase_configured
+from claycomp.storage.supabase_client import SupabaseClient, SupabaseError
 
 
 def _now() -> str:
@@ -86,8 +87,59 @@ class FileTableStore(TableStore):
         return True
 
 
+class SupabaseTableStore(TableStore):
+    TABLE = "claycomp_tables"
+
+    def __init__(self, client: SupabaseClient | None = None):
+        self.client = client or SupabaseClient.from_env()
+
+    async def list_tables(self) -> list[dict[str, Any]]:
+        rows = await self.client.select(
+            self.TABLE,
+            columns="id,name,row_count,created_at,updated_at",
+            order="updated_at.desc",
+        )
+        return rows
+
+    async def get_table(self, table_id: str) -> dict[str, Any] | None:
+        rows = await self.client.select(
+            self.TABLE,
+            columns="data",
+            filters={"id": f"eq.{table_id}"},
+            limit=1,
+        )
+        if not rows:
+            return None
+        data = rows[0].get("data") or {}
+        return data if isinstance(data, dict) else None
+
+    async def save_table(self, table: dict[str, Any]) -> dict[str, Any]:
+        table_id = table.get("id") or str(uuid.uuid4())
+        table["id"] = table_id
+        table["updated_at"] = _now()
+        if "created_at" not in table:
+            table["created_at"] = table["updated_at"]
+
+        await self.client.upsert(
+            self.TABLE,
+            {
+                "id": table_id,
+                "name": table.get("name", "Untitled"),
+                "row_count": len(table.get("records", [])),
+                "data": table,
+                "created_at": table["created_at"],
+                "updated_at": table["updated_at"],
+            },
+        )
+        return table
+
+    async def delete_table(self, table_id: str) -> bool:
+        await self.client.delete(self.TABLE, filters={"id": f"eq.{table_id}"})
+        return True
+
+
 class UpstashTableStore(TableStore):
-    """Redis-backed storage via Upstash REST API (works on Vercel)."""
+    """Legacy Redis-backed storage."""
 
     def __init__(self, url: str, token: str):
         self.url = url
@@ -143,6 +195,8 @@ class UpstashTableStore(TableStore):
 
 
 def get_table_store() -> TableStore:
+    if supabase_configured():
+        return SupabaseTableStore()
     creds = redis_credentials()
     if creds:
         return UpstashTableStore(*creds)

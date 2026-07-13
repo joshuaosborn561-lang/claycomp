@@ -136,7 +136,7 @@ export default function TableMode() {
 
         <div className="mt-auto p-4 border-t border-slate-100">
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            Tables auto-save as you work. Cloud sync when Upstash is configured on Vercel.
+            Tables auto-save as you work. Cloud sync when Supabase is connected on Vercel.
           </p>
         </div>
       </aside>
