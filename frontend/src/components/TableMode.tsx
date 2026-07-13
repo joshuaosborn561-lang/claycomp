@@ -7,14 +7,27 @@ import {
   Play,
   Plus,
   Sparkles,
+  Trash2,
   Upload,
 } from 'lucide-react'
 import { exportCsv, streamEnrich, uploadCsv } from '../api'
+import EditableCell from './EditableCell'
+import EditableHeader from './EditableHeader'
 import { isAbortError, useJobs } from '../context/JobsContext'
 import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
 import SculptorPanel from './SculptorPanel'
 import TableSwitcher from './TableSwitcher'
+import {
+  addRow,
+  addSourceColumn,
+  clearEnrichedColumn,
+  deleteRow,
+  deleteSourceColumn,
+  renameSourceColumn,
+  updateEnrichedCell,
+  updateSourceCell,
+} from '../lib/tableEdits'
 import type { Enricher, EnrichmentColumn } from '../types'
 import { columnOutputKey, formatCell, sourceColumnsFromRecords } from '../types'
 
@@ -141,6 +154,58 @@ export default function TableMode() {
     URL.revokeObjectURL(url)
   }
 
+  const handleAddRow = () => {
+    const keys = sourceColumns.map((col) => col.key)
+    setRecords(addRow(records, keys.length ? keys : ['Column 1']))
+  }
+
+  const handleAddSourceColumn = () => {
+    const name = window.prompt('New column name')
+    if (!name?.trim()) return
+    setRecords(addSourceColumn(records, name.trim()))
+  }
+
+  const handleDeleteSourceColumn = (key: string) => {
+    if (!window.confirm(`Delete column "${key}"?`)) return
+    setRecords(deleteSourceColumn(records, key))
+  }
+
+  const handleRenameSourceColumn = (oldKey: string, newKey: string) => {
+    setRecords(renameSourceColumn(records, oldKey, newKey))
+  }
+
+  const handleDeleteEnrichmentColumn = (col: EnrichmentColumn) => {
+    if (!window.confirm(`Delete enrichment column "${col.label}"?`)) return
+    const outputKey = columnOutputKey(col, enrichers)
+    setColumns(columns.filter((c) => c.id !== col.id))
+    if (previewColumn?.id === col.id) setPreviewColumn(null)
+    setRecords(clearEnrichedColumn(records, outputKey))
+  }
+
+  const handleRenameEnrichmentColumn = (colId: string, label: string) => {
+    const col = columns.find((c) => c.id === colId)
+    if (!col) return
+    const oldKey = columnOutputKey(col, enrichers)
+    const updatedCol: EnrichmentColumn = {
+      ...col,
+      label,
+      columnName: col.enricherKey === 'custom' ? label : col.columnName,
+    }
+    const newKey = columnOutputKey(updatedCol, enrichers)
+    setColumns(columns.map((c) => (c.id === colId ? updatedCol : c)))
+    if (oldKey !== newKey) {
+      setRecords(
+        records.map((record) => {
+          if (!(oldKey in record.enriched)) return record
+          const enriched = { ...record.enriched }
+          enriched[newKey] = enriched[oldKey]
+          delete enriched[oldKey]
+          return { ...record, enriched }
+        }),
+      )
+    }
+  }
+
   return (
     <div className="h-full flex">
       <aside className="w-56 shrink-0 border-r border-slate-200/80 bg-white flex flex-col">
@@ -181,7 +246,22 @@ export default function TableMode() {
             )}
           </div>
 
-          <div className="relative">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAddRow}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:border-clay-300 hover:text-clay-700"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add row
+            </button>
+            <button
+              onClick={handleAddSourceColumn}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:border-clay-300 hover:text-clay-700"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add column
+            </button>
+            <div className="relative">
             <button
               onClick={() => setShowAddMenu(!showAddMenu)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-clay-600 hover:bg-clay-700 text-white text-xs font-medium transition-colors shadow-sm"
@@ -210,6 +290,7 @@ export default function TableMode() {
                 ))}
               </div>
             )}
+            </div>
           </div>
         </div>
 
@@ -220,15 +301,28 @@ export default function TableMode() {
                 <th className="w-10 px-3 py-2.5 text-left text-[11px] font-medium text-slate-400 border-r border-slate-100">#</th>
                 {sourceColumns.map((col) => (
                   <th key={col.key} className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wide border-r border-slate-100 min-w-[140px] bg-slate-50/50">
-                    {col.label}
+                    <EditableHeader
+                      label={col.label}
+                      onRename={(label) => handleRenameSourceColumn(col.key, label)}
+                      onDelete={() => handleDeleteSourceColumn(col.key)}
+                    />
                   </th>
                 ))}
                 {displayColumns.map((col) => (
                   <th key={col.id} className={`px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide border-r min-w-[160px] ${col.preview ? 'text-amber-700 border-amber-100 bg-amber-50/80' : 'text-clay-700 border-clay-100 bg-clay-50/80'}`}>
                     <div className="flex items-center justify-between gap-1">
-                      <span className="flex items-center gap-1 truncate">
+                      <span className="flex items-center gap-1 min-w-0 flex-1">
                         <Sparkles className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{col.label}{col.preview ? ' (test)' : ''}</span>
+                        {col.preview ? (
+                          <span className="truncate">{col.label} (test)</span>
+                        ) : (
+                          <EditableHeader
+                            label={col.label}
+                            onRename={(label) => handleRenameEnrichmentColumn(col.id, label)}
+                            onDelete={() => handleDeleteEnrichmentColumn(col)}
+                            className="text-clay-700"
+                          />
+                        )}
                       </span>
                       {!col.preview && (
                         <div className="flex shrink-0">
@@ -248,11 +342,26 @@ export default function TableMode() {
             </thead>
             <tbody>
               {records.map((row, i) => (
-                <tr key={`${row.id}-${i}`} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < TEST_ROWS ? 'bg-amber-50/30' : ''}`}>
-                  <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">{i + 1}</td>
+                <tr key={`${row.id}-${i}`} className={`group border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < TEST_ROWS ? 'bg-amber-50/30' : ''}`}>
+                  <td className="px-2 py-2 text-xs text-slate-300 border-r border-slate-50">
+                    <div className="flex items-center justify-between gap-1">
+                      <span>{i + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRecords(deleteRow(records, row.id))}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-100"
+                        title="Delete row"
+                      >
+                        <Trash2 className="w-3 h-3 text-red-500" />
+                      </button>
+                    </div>
+                  </td>
                   {sourceColumns.map((col) => (
-                    <td key={col.key} className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]">
-                      {col.get(row) || <span className="text-slate-300">—</span>}
+                    <td key={col.key} className="px-2 py-1 text-slate-700 border-r border-slate-50 max-w-[200px]">
+                      <EditableCell
+                        value={col.get(row) || ''}
+                        onSave={(value) => setRecords(updateSourceCell(records, row.id, col.key, value))}
+                      />
                     </td>
                   ))}
                   {displayColumns.map((col) => {
@@ -260,11 +369,14 @@ export default function TableMode() {
                     const value = row.enriched[outputKey]
                     const isRunning = runningCol === col.id && value == null
                     return (
-                      <td key={col.id} className="px-3 py-2 border-r border-clay-50/50 bg-clay-50/20 truncate max-w-[220px]">
+                      <td key={col.id} className="px-2 py-1 border-r border-clay-50/50 bg-clay-50/20 max-w-[220px]">
                         {isRunning ? (
-                          <span className="text-xs text-clay-400 animate-pulse-soft">Running…</span>
+                          <span className="text-xs text-clay-400 animate-pulse-soft px-1">Running…</span>
                         ) : (
-                          <span className="text-slate-700">{formatCell(value)}</span>
+                          <EditableCell
+                            value={formatCell(value) === '—' ? '' : formatCell(value)}
+                            onSave={(text) => setRecords(updateEnrichedCell(records, row.id, outputKey, text))}
+                          />
                         )}
                       </td>
                     )
@@ -276,9 +388,16 @@ export default function TableMode() {
           </table>
 
           {records.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-              <Upload className="w-8 h-8 mb-3 opacity-40" />
-              <p className="text-sm">Import a CSV to get started</p>
+            <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-3">
+              <Upload className="w-8 h-8 opacity-40" />
+              <p className="text-sm">Import a CSV or add a row to get started</p>
+              <button
+                onClick={handleAddRow}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:border-clay-300"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add row
+              </button>
             </div>
           )}
         </div>
