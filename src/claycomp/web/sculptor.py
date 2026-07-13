@@ -10,6 +10,8 @@ from claycomp.llm.errors import format_llm_error
 from claycomp.web.sculptor_analytics import analyze_table, estimate_credits
 from claycomp.web.schemas import ChatMessage, RecordDTO, dto_to_record, record_to_dto
 
+TEST_ROWS = 10
+
 ENRICHERS_DOC = "\n".join(
     f"- {k}: {cls().description}" for k, cls in ENRICHERS.items()
 ) + "\n- custom: your own AI prompt per row"
@@ -144,7 +146,7 @@ SCULPTOR_TOOLS = [
         "type": "function",
         "function": {
             "name": "execute_sandbox",
-            "description": "Run an enrichment in sandbox mode on first 3 rows (safe preview)",
+            "description": f"Run an enrichment test on the first {TEST_ROWS} rows (safe preview)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -229,7 +231,7 @@ You can do everything Clay Sculptor does for table workflows:
 
 **Enrichment ops**
 - propose_column / recommend_columns / propose_workflow
-- execute_sandbox to preview on 3 rows before going live (always prefer sandbox first)
+- execute_sandbox to preview on 10 rows before going live (always prefer test first)
 - diagnose_table when user has errors or missing data
 - estimate_cost before large runs
 
@@ -245,14 +247,14 @@ Built-in enrichers:
 
 Rules:
 - Always reference actual table data (names, companies, locations)
-- Prefer sandbox before full runs
+- Prefer test runs before full runs
 - Use tools proactively — don't just describe what to do, DO it via tools
 - Be concise and actionable like Clay Sculptor
 - If business context is provided, tailor all recommendations to it
 - For column proposals: call propose_column OR recommend_columns ONCE per user message — never propose the same column twice
 - After proposing columns, stop — do not call proposal tools again in follow-up turns
 - When the user asks to fill/find/add ONE field (e.g. location), call propose_column exactly ONCE — do NOT use recommend_columns and do NOT suggest other fields
-- recommend_columns is only for broad "what should I add?" questions — maximum 2 items, never duplicate topics
+- recommend_columns is only for broad "what should I add?" questions — maximum 1 item, never duplicate topics
 - Never create multiple columns for the same purpose (e.g. one "Location" column, not "Location" + "Full Location" + "Filled Location")"""
 
 
@@ -299,7 +301,7 @@ async def _run_sandbox_enrichment(
         column_name=args.get("column_name") or args.get("label") or "custom_field",
     )
     recs = [dto_to_record(r) for r in records]
-    targets = recs[:3]
+    targets = recs[:TEST_ROWS]
     for rec in targets:
         try:
             result = await enricher.enrich(rec)
@@ -314,29 +316,75 @@ PROPOSAL_TOOL_NAMES = frozenset({"propose_column", "recommend_columns"})
 
 TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     "location": ("location", "city", "state", "address", "where", "lives", "geograph", "region"),
-    "title": ("title", "job title", "role", "position"),
-    "name": ("name", "normalize"),
+    "title": ("job title", "title", "role", "position"),
+    "name": ("normalize name", "name normalizer", "normalize"),
     "restaurant": ("restaurant", "dining", "food", "nearby"),
-    "review": ("review", "rating", "google review"),
-    "area": ("area", "nickname", "neighborhood"),
-    "baseball": ("baseball", "team", "mlb"),
+    "review": ("google review", "review", "rating"),
+    "area": ("area nickname", "neighborhood", "nickname"),
+    "baseball": ("baseball", "mlb", "team"),
     "company": ("company", "employer", "organization"),
     "email": ("email",),
 }
+
+TOPIC_MATCH_ORDER = (
+    "location", "title", "restaurant", "review", "baseball", "area", "name", "company", "email",
+)
+
+FALLBACK_PROPOSALS: dict[str, dict[str, str]] = {
+    "location": {
+        "column_name": "location",
+        "label": "Location",
+        "enricher_key": "custom",
+        "custom_prompt": (
+            "Find where this person is located. Use their first name, last name, and company. "
+            "Return city and state."
+        ),
+        "reasoning": "Fill in missing location data using name and company.",
+    },
+    "title": {
+        "column_name": "title",
+        "label": "Title",
+        "enricher_key": "custom",
+        "custom_prompt": "Find the job title for this person at their company.",
+        "reasoning": "Fill in missing title data.",
+    },
+}
+
+
+def _topic_from_text(text: str) -> str | None:
+    text_l = text.lower()
+    for topic in TOPIC_MATCH_ORDER:
+        for kw in sorted(TOPIC_KEYWORDS[topic], key=len, reverse=True):
+            if kw in text_l:
+                return topic
+    return None
 
 
 def _proposal_topic(args: dict) -> str:
     enricher = (args.get("enricher_key") or "").lower()
     if enricher and enricher != "custom":
         return enricher
-    blob = " ".join(
-        str(args.get(k) or "")
-        for k in ("label", "column_name", "custom_prompt", "reasoning", "reason")
+
+    label_blob = f"{args.get('label', '')} {args.get('column_name', '')}".lower()
+    label_topic = _topic_from_text(label_blob)
+    if label_topic:
+        return label_topic
+
+    prompt_blob = " ".join(
+        str(args.get(k) or "") for k in ("custom_prompt", "reasoning", "reason")
     ).lower()
-    for topic, keywords in TOPIC_KEYWORDS.items():
-        if any(kw in blob for kw in keywords):
-            return topic
-    return f"custom:{blob.strip()[:48] or 'misc'}"
+    prompt_topic = _topic_from_text(prompt_blob)
+    if prompt_topic:
+        return prompt_topic
+
+    return f"custom:{label_blob.strip()[:48] or 'misc'}"
+
+
+def _topic_matches_primary(primary: str, topic: str, args: dict) -> bool:
+    if topic == primary:
+        return True
+    label_blob = f"{args.get('label', '')} {args.get('column_name', '')}".lower()
+    return any(kw in label_blob for kw in TOPIC_KEYWORDS.get(primary, ()))
 
 
 def _column_config_topic(col: dict) -> str:
@@ -358,9 +406,9 @@ def _extract_primary_topic(text: str) -> str | None:
         if not match:
             continue
         phrase = match.group(1).strip()
-        for topic, keywords in TOPIC_KEYWORDS.items():
-            if any(kw in phrase for kw in keywords):
-                return topic
+        topic = _topic_from_text(phrase)
+        if topic:
+            return topic
     return None
 
 
@@ -381,7 +429,7 @@ def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
         primary_topic = salient_topics[0]
     is_specific = primary_topic is not None
     is_workflow = any(w in text for w in ("workflow", "full enrichment", "build a", "all enrichments"))
-    cap = 5 if is_workflow else (1 if is_specific else 2)
+    cap = 1
     return {
         "cap": cap,
         "primary_topic": primary_topic,
@@ -406,17 +454,57 @@ class _ProposalGate:
         self.emitted = 0
         self.configured_topics = {_column_config_topic(c) for c in columns}
 
-    def allow(self, args: dict) -> bool:
+    def allow(self, args: dict, *, force: bool = False) -> bool:
         if self.emitted >= self.cap:
             return False
         topic = _proposal_topic(args)
-        if self.primary_topic and topic != self.primary_topic:
-            return False
-        if topic in self.seen_topics or topic in self.configured_topics:
+        if not force:
+            if self.primary_topic and not _topic_matches_primary(self.primary_topic, topic, args):
+                return False
+            if topic in self.seen_topics or topic in self.configured_topics:
+                return False
+        elif topic in self.seen_topics:
             return False
         self.seen_topics.add(topic)
         self.emitted += 1
         return True
+
+
+def _existing_column_label(columns: list[dict], topic: str) -> str | None:
+    for col in columns:
+        if _column_config_topic(col) == topic:
+            return col.get("label") or topic.title()
+    return None
+
+
+def _finalize_proposals(
+    proposal_gate: _ProposalGate,
+    intent: dict[str, Any],
+    columns: list[dict],
+) -> list[dict[str, Any]]:
+    if proposal_gate.emitted > 0:
+        return []
+
+    primary = intent.get("primary_topic")
+    if primary:
+        existing = _existing_column_label(columns, primary)
+        if existing:
+            return [{
+                "type": "token",
+                "content": (
+                    f"\n\nYou already have a **{existing}** column — scroll right in the table "
+                    "and click the play button to run it."
+                ),
+            }]
+
+        fallback = FALLBACK_PROPOSALS.get(primary)
+        if fallback and proposal_gate.allow(fallback, force=True):
+            return [{"type": "proposal", "proposal": fallback}]
+
+    return [{
+        "type": "token",
+        "content": "\n\nI couldn't build a column proposal. Use the **+** button to add a Custom AI column.",
+    }]
 
 
 def _proposal_key(args: dict) -> str:
@@ -534,12 +622,14 @@ async def stream_sculptor(
                         records = [RecordDTO.model_validate(r) for r in payload["records"]]
 
             if all(call.name in PROPOSAL_TOOL_NAMES for call in result.tool_calls):
+                for payload in _finalize_proposals(proposal_gate, intent, columns):
+                    yield _sse(payload)
                 if result.content:
                     yield _sse({"type": "token", "content": result.content})
-                else:
+                elif proposal_gate.emitted > 0:
                     yield _sse({
                         "type": "token",
-                        "content": "\n\nClick **Apply** to add the column to your table, or **Sandbox** to test on 3 rows first.",
+                        "content": "\n\nClick **Apply** to add the column to your table, or **Test** to try it on 10 rows first.",
                     })
                 break
 

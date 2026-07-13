@@ -17,7 +17,7 @@ import TableSwitcher from './TableSwitcher'
 import type { Enricher, EnrichmentColumn } from '../types'
 import { columnOutputKey, formatCell, sourceColumnsFromRecords } from '../types'
 
-const SANDBOX_ROWS = 3
+const TEST_ROWS = 10
 
 export default function TableMode() {
   const { settings } = useSettings()
@@ -50,14 +50,14 @@ export default function TableMode() {
     })
   }
 
-  const runColumn = async (col: EnrichmentColumn, sandbox = false) => {
+  const runColumn = async (col: EnrichmentColumn, testRun = false) => {
     const enricherKey = col.enricherKey === 'custom' ? 'custom' : col.enricherKey
-    const rowIds = sandbox ? records.slice(0, SANDBOX_ROWS).map((r) => r.id) : undefined
-    const total = sandbox ? Math.min(SANDBOX_ROWS, records.length) : records.length
+    const rowIds = testRun ? records.slice(0, TEST_ROWS).map((r) => r.id) : undefined
+    const total = testRun ? Math.min(TEST_ROWS, records.length) : records.length
 
     setRunningCol(col.id)
-    if (sandbox) setSandboxCol(col.id)
-    setProgress({ done: 0, total, mode: sandbox ? 'sandbox' : 'full' })
+    if (testRun) setSandboxCol(col.id)
+    setProgress({ done: 0, total, mode: testRun ? 'test' : 'full' })
 
     const updated = [...records]
     const outputKey = columnOutputKey(col, enrichers)
@@ -67,7 +67,7 @@ export default function TableMode() {
       enricherKey,
       (event) => {
         if (event.type === 'progress' || event.type === 'error') {
-          setProgress({ done: event.done as number, total: event.total as number, mode: sandbox ? 'sandbox' : 'full' })
+          setProgress({ done: event.done as number, total: event.total as number, mode: testRun ? 'test' : 'full' })
           const idx = updated.findIndex((r) => r.id === event.row_id)
           if (idx >= 0 && event.type === 'progress') {
             const column = (event.column as string) || outputKey
@@ -147,8 +147,8 @@ export default function TableMode() {
             </span>
             {progress && (
               <span className="text-xs text-clay-600 bg-clay-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                {progress.mode === 'sandbox' && <FlaskConical className="w-3 h-3" />}
-                {progress.mode === 'sandbox' ? 'Sandbox' : 'Enriching'} {progress.done}/{progress.total}
+                {progress.mode === 'test' && <FlaskConical className="w-3 h-3" />}
+                {progress.mode === 'test' ? 'Testing' : 'Enriching'} {progress.done}/{progress.total}
               </span>
             )}
           </div>
@@ -203,7 +203,7 @@ export default function TableMode() {
                         <span className="truncate">{col.label}</span>
                       </span>
                       <div className="flex shrink-0">
-                        <button onClick={() => runColumn(col, true)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title="Sandbox (3 rows)">
+                        <button onClick={() => runColumn(col, true)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title={`Test (${TEST_ROWS} rows)`}>
                           <FlaskConical className="w-3 h-3" />
                         </button>
                         <button onClick={() => runColumn(col)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title="Run all rows">
@@ -218,7 +218,7 @@ export default function TableMode() {
             </thead>
             <tbody>
               {records.map((row, i) => (
-                <tr key={`${row.id}-${i}`} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''}`}>
+                <tr key={`${row.id}-${i}`} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < TEST_ROWS ? 'bg-amber-50/30' : ''}`}>
                   <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">{i + 1}</td>
                   {sourceColumns.map((col) => (
                     <td key={col.key} className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]">
