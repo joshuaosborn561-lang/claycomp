@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, AsyncIterator
 
 from claycomp.enrichers import ENRICHERS, get_enricher
@@ -18,7 +19,7 @@ SCULPTOR_TOOLS = [
         "type": "function",
         "function": {
             "name": "propose_column",
-            "description": "Propose a new enrichment column with config",
+            "description": "Propose exactly ONE enrichment column. Use this when the user asks to fill/add/find a specific field.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -36,7 +37,7 @@ SCULPTOR_TOOLS = [
         "type": "function",
         "function": {
             "name": "recommend_columns",
-            "description": "Recommend multiple enrichment columns for this table",
+            "description": "ONLY for open-ended questions like 'what enrichments should I add?'. Max 2 recommendations. Never use when the user asked for one specific field.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -247,7 +248,12 @@ Rules:
 - Prefer sandbox before full runs
 - Use tools proactively — don't just describe what to do, DO it via tools
 - Be concise and actionable like Clay Sculptor
-- If business context is provided, tailor all recommendations to it"""
+- If business context is provided, tailor all recommendations to it
+- For column proposals: call propose_column OR recommend_columns ONCE per user message — never propose the same column twice
+- After proposing columns, stop — do not call proposal tools again in follow-up turns
+- When the user asks to fill/find/add ONE field (e.g. location), call propose_column exactly ONCE — do NOT use recommend_columns and do NOT suggest other fields
+- recommend_columns is only for broad "what should I add?" questions — maximum 2 items, never duplicate topics
+- Never create multiple columns for the same purpose (e.g. one "Location" column, not "Location" + "Full Location" + "Filled Location")"""
 
 
 def _table_context(records: list[RecordDTO], columns: list[dict], business_context: str | None) -> str:
@@ -304,6 +310,119 @@ async def _run_sandbox_enrichment(
     return [record_to_dto(r) for r in recs]
 
 
+PROPOSAL_TOOL_NAMES = frozenset({"propose_column", "recommend_columns"})
+
+TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "location": ("location", "city", "state", "address", "where", "lives", "geograph", "region"),
+    "title": ("title", "job title", "role", "position"),
+    "name": ("name", "normalize"),
+    "restaurant": ("restaurant", "dining", "food", "nearby"),
+    "review": ("review", "rating", "google review"),
+    "area": ("area", "nickname", "neighborhood"),
+    "baseball": ("baseball", "team", "mlb"),
+    "company": ("company", "employer", "organization"),
+    "email": ("email",),
+}
+
+
+def _proposal_topic(args: dict) -> str:
+    enricher = (args.get("enricher_key") or "").lower()
+    if enricher and enricher != "custom":
+        return enricher
+    blob = " ".join(
+        str(args.get(k) or "")
+        for k in ("label", "column_name", "custom_prompt", "reasoning", "reason")
+    ).lower()
+    for topic, keywords in TOPIC_KEYWORDS.items():
+        if any(kw in blob for kw in keywords):
+            return topic
+    return f"custom:{blob.strip()[:48] or 'misc'}"
+
+
+def _column_config_topic(col: dict) -> str:
+    return _proposal_topic({
+        "enricher_key": col.get("enricherKey") or col.get("enricher_key") or "",
+        "label": col.get("label") or "",
+        "column_name": col.get("columnName") or col.get("column_name") or "",
+        "custom_prompt": col.get("customPrompt") or col.get("custom_prompt") or "",
+    })
+
+
+def _extract_primary_topic(text: str) -> str | None:
+    text_l = text.lower()
+    for pattern in (
+        r"(?:try to )?(?:fill in|populate|enrich|complete|add)\s+(?:the\s+)?([\w\s]+?)(?:\s+for|\s+using|$|\.|,)",
+        r"(?:find|get|look up|lookup|search for)\s+(?:the\s+)?([\w\s]+?)(?:\s+for|\s+using|$|\.|,)",
+    ):
+        match = re.search(pattern, text_l)
+        if not match:
+            continue
+        phrase = match.group(1).strip()
+        for topic, keywords in TOPIC_KEYWORDS.items():
+            if any(kw in phrase for kw in keywords):
+                return topic
+    return None
+
+
+def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
+    last = next((m.content for m in reversed(messages) if m.role == "user"), "")
+    text = last.lower()
+    specific_verbs = (
+        "fill in", "look up", "lookup", "find", "get", "add", "figure out",
+        "populate", "enrich", "search for", "try to fill",
+    )
+    primary_topic = _extract_primary_topic(last)
+    contextual_topics = {"name", "company"}
+    salient_topics = [
+        t for t, kws in TOPIC_KEYWORDS.items()
+        if t not in contextual_topics and any(kw in text for kw in kws)
+    ]
+    if not primary_topic and any(v in text for v in specific_verbs) and len(salient_topics) == 1:
+        primary_topic = salient_topics[0]
+    is_specific = primary_topic is not None
+    is_workflow = any(w in text for w in ("workflow", "full enrichment", "build a", "all enrichments"))
+    cap = 5 if is_workflow else (1 if is_specific else 2)
+    return {
+        "cap": cap,
+        "primary_topic": primary_topic,
+        "topics": salient_topics,
+        "is_specific": is_specific,
+        "hint": (
+            f"USER INTENT: They asked specifically to enrich **{primary_topic}** only. "
+            f"Call propose_column exactly once for {primary_topic}. "
+            "Do not use recommend_columns. Do not suggest other fields."
+        )
+        if is_specific and primary_topic
+        else None,
+    }
+
+
+class _ProposalGate:
+    def __init__(self, *, cap: int, primary_topic: str | None, columns: list[dict]) -> None:
+        self.cap = cap
+        self.primary_topic = primary_topic
+        self.columns = columns
+        self.seen_topics: set[str] = set()
+        self.emitted = 0
+        self.configured_topics = {_column_config_topic(c) for c in columns}
+
+    def allow(self, args: dict) -> bool:
+        if self.emitted >= self.cap:
+            return False
+        topic = _proposal_topic(args)
+        if self.primary_topic and topic != self.primary_topic:
+            return False
+        if topic in self.seen_topics or topic in self.configured_topics:
+            return False
+        self.seen_topics.add(topic)
+        self.emitted += 1
+        return True
+
+
+def _proposal_key(args: dict) -> str:
+    return _proposal_topic(args)
+
+
 async def _handle_tool(
     name: str,
     args: dict,
@@ -312,19 +431,29 @@ async def _handle_tool(
     columns: list[dict],
     provider: str | None,
     model: str | None,
+    proposal_gate: _ProposalGate | None = None,
 ) -> AsyncIterator[dict]:
     if name == "propose_column":
+        if proposal_gate is not None and not proposal_gate.allow(args):
+            return
         yield {"type": "proposal", "proposal": args}
     elif name == "recommend_columns":
-        yield {"type": "recommendations", "recommendations": args.get("recommendations", [])}
-        for rec in args.get("recommendations", []):
-            yield {"type": "proposal", "proposal": {
+        recommendations = args.get("recommendations", [])
+        emitted: list[dict] = []
+        for rec in recommendations:
+            proposal = {
                 "column_name": rec.get("column_name") or rec.get("enricher_key"),
                 "label": rec.get("label"),
                 "enricher_key": rec.get("enricher_key"),
                 "custom_prompt": rec.get("custom_prompt"),
                 "reasoning": rec.get("reason"),
-            }}
+            }
+            if proposal_gate is not None and not proposal_gate.allow(proposal):
+                continue
+            emitted.append(proposal)
+            yield {"type": "proposal", "proposal": proposal}
+        if emitted:
+            yield {"type": "recommendations", "recommendations": emitted}
     elif name == "propose_workflow":
         yield {"type": "workflow", "workflow": args}
     elif name == "analyze_table":
@@ -356,6 +485,9 @@ async def stream_sculptor(
     business_context: str | None = None,
 ) -> AsyncIterator[str]:
     context = _table_context(records, columns, business_context)
+    intent = _user_intent(messages)
+    if intent.get("hint"):
+        context += "\n\n" + intent["hint"]
     llm_messages = [LLMMessage(role="system", content=SCULPTOR_SYSTEM + "\n\n" + context)]
     for m in messages:
         llm_messages.append(LLMMessage(role=m.role, content=m.content))
@@ -369,7 +501,12 @@ async def stream_sculptor(
             yield event
         return
 
-    for _ in range(6):
+    proposal_gate = _ProposalGate(
+        cap=intent["cap"],
+        primary_topic=intent.get("primary_topic"),
+        columns=columns,
+    )
+    for _ in range(3):
         try:
             result = await llm_complete(
                 llm_messages,
@@ -390,10 +527,22 @@ async def stream_sculptor(
                 async for payload in _handle_tool(
                     call.name, call.arguments,
                     records=records, columns=columns, provider=provider, model=model,
+                    proposal_gate=proposal_gate,
                 ):
                     yield _sse(payload)
                     if payload.get("type") == "records":
                         records = [RecordDTO.model_validate(r) for r in payload["records"]]
+
+            if all(call.name in PROPOSAL_TOOL_NAMES for call in result.tool_calls):
+                if result.content:
+                    yield _sse({"type": "token", "content": result.content})
+                else:
+                    yield _sse({
+                        "type": "token",
+                        "content": "\n\nClick **Apply** to add the column to your table, or **Sandbox** to test on 3 rows first.",
+                    })
+                break
+
             llm_messages.append(LLMMessage(
                 role="user",
                 content=f"(Tools executed: {', '.join(executed)}. Summarize results for the user in 2-3 sentences.)",

@@ -31,7 +31,12 @@ export default function TableMode() {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const addColumn = (col: EnrichmentColumn) => {
-    setColumns([...columns, col])
+    const exists = columns.some(
+      (c) =>
+        c.label.toLowerCase() === col.label.toLowerCase() ||
+        (col.columnName && c.columnName?.toLowerCase() === col.columnName.toLowerCase()),
+    )
+    if (!exists) setColumns([...columns, col])
     setShowAddMenu(false)
   }
 

@@ -35,6 +35,24 @@ const STARTERS = [
   'Diagnose my table for issues',
 ]
 
+function proposalTopic(p: ColumnProposal): string {
+  const enricher = p.enricher_key
+  if (enricher && enricher !== 'custom') return enricher
+  const blob = `${p.label} ${p.column_name || ''} ${p.custom_prompt || ''} ${p.reasoning || ''}`.toLowerCase()
+  if (/location|city|state|address|where|lives|geograph|region/.test(blob)) return 'location'
+  if (/title|job title|role|position/.test(blob)) return 'title'
+  if (/restaurant|dining|food|nearby/.test(blob)) return 'restaurant'
+  if (/review|rating/.test(blob)) return 'review'
+  if (/name|normalize/.test(blob)) return 'name'
+  if (/area|nickname|neighborhood/.test(blob)) return 'area'
+  if (/baseball|team|mlb/.test(blob)) return 'baseball'
+  return `custom:${blob.trim().slice(0, 48) || 'misc'}`
+}
+
+function proposalKey(p: ColumnProposal): string {
+  return proposalTopic(p)
+}
+
 type Props = {
   onAddColumn: (col: EnrichmentColumn) => void
   onApplyWorkflow: (steps: EnrichmentColumn[]) => void
@@ -62,6 +80,7 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
   const [diagnosis, setDiagnosis] = useState<DiagnosisIssue[]>([])
   const [costNote, setCostNote] = useState<string | null>(null)
   const [showContext, setShowContext] = useState(false)
+  const [appliedProposalKeys, setAppliedProposalKeys] = useState<Set<string>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -85,6 +104,50 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
     setDrafts([])
     setDiagnosis([])
     setCostNote(null)
+    setAppliedProposalKeys(new Set())
+  }
+
+  const columnAlreadyExists = (p: ColumnProposal) => {
+    const topic = proposalTopic(p)
+    if (
+      columns.some((c) => {
+        const blob = `${c.label} ${c.columnName || ''} ${c.customPrompt || ''}`.toLowerCase()
+        if (c.enricherKey !== 'custom') return c.enricherKey === topic
+        if (topic === 'location' && /location|city|state/.test(blob)) return true
+        if (topic === 'title' && /title|role/.test(blob)) return true
+        return proposalTopic({
+          enricher_key: c.enricherKey,
+          label: c.label,
+          column_name: c.columnName || '',
+          custom_prompt: c.customPrompt || '',
+        }) === topic
+      })
+    ) {
+      return true
+    }
+    return (
+      columns.some(
+        (c) =>
+          c.label.toLowerCase() === p.label.toLowerCase() ||
+          (p.column_name && c.columnName?.toLowerCase() === p.column_name.toLowerCase()),
+      )
+    )
+  }
+
+  const handleApplyProposal = (p: ColumnProposal) => {
+    const key = proposalKey(p)
+    if (appliedProposalKeys.has(key) || columnAlreadyExists(p)) {
+      setProposals((prev) => prev.filter((x) => proposalKey(x) !== key))
+      return
+    }
+    onAddColumn(proposalToColumn(p))
+    setAppliedProposalKeys((prev) => new Set(prev).add(key))
+    setProposals((prev) => prev.filter((x) => proposalKey(x) !== key))
+  }
+
+  const handleSandboxProposal = (p: ColumnProposal) => {
+    onSandbox(proposalToColumn(p))
+    setAppliedProposalKeys((prev) => new Set(prev).add(proposalKey(p)))
   }
 
   const send = async (text: string) => {
@@ -118,8 +181,11 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
           }
           if (event.type === 'proposal') {
             const p = event.proposal as ColumnProposal
-            newProposals.push(p)
-            setProposals([...newProposals])
+            const key = proposalKey(p)
+            if (!newProposals.some((x) => proposalKey(x) === key)) {
+              newProposals.push(p)
+              setProposals([...newProposals])
+            }
           }
           if (event.type === 'workflow') {
             const w = event.workflow as WorkflowProposal
@@ -237,14 +303,19 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onSandbox 
           </ArtifactCard>
         ))}
 
-        {proposals.map((p, i) => (
-          <ProposalCard
-            key={`${p.column_name}-${i}`}
-            proposal={p}
-            onApply={() => onAddColumn(proposalToColumn(p))}
-            onSandbox={() => onSandbox(proposalToColumn(p))}
-          />
-        ))}
+        {proposals.map((p) => {
+          const key = proposalKey(p)
+          const applied = appliedProposalKeys.has(key) || columnAlreadyExists(p)
+          return (
+            <ProposalCard
+              key={key}
+              proposal={p}
+              applied={applied}
+              onApply={() => handleApplyProposal(p)}
+              onSandbox={() => handleSandboxProposal(p)}
+            />
+          )
+        })}
 
         {drafts.map((d, i) => (
           <ArtifactCard key={i} icon={<Mail className="w-3.5 h-3.5" />} title={d.lead_name}>
@@ -350,9 +421,19 @@ function SculptorMessage({ message, streaming }: { message: ChatMessage; streami
   )
 }
 
-function ProposalCard({ proposal, onApply, onSandbox }: { proposal: ColumnProposal; onApply: () => void; onSandbox: () => void }) {
+function ProposalCard({
+  proposal,
+  applied,
+  onApply,
+  onSandbox,
+}: {
+  proposal: ColumnProposal
+  applied?: boolean
+  onApply: () => void
+  onSandbox: () => void
+}) {
   return (
-    <div className="rounded-xl border border-clay-200 bg-clay-50/50 p-3 space-y-2 animate-fade-in">
+    <div className={`rounded-xl border p-3 space-y-2 animate-fade-in ${applied ? 'border-emerald-200 bg-emerald-50/50' : 'border-clay-200 bg-clay-50/50'}`}>
       <div className="flex items-start gap-2">
         <Sparkles className="w-3.5 h-3.5 text-clay-500 mt-0.5 shrink-0" />
         <div>
@@ -363,14 +444,26 @@ function ProposalCard({ proposal, onApply, onSandbox }: { proposal: ColumnPropos
           )}
         </div>
       </div>
-      <div className="flex gap-1.5">
-        <button onClick={onSandbox} className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-clay-300">
-          <FlaskConical className="w-3 h-3" /> Sandbox
-        </button>
-        <button onClick={onApply} className="flex-1 py-1.5 rounded-lg bg-clay-600 text-[10px] font-medium text-white hover:bg-clay-700">
-          Apply
-        </button>
-      </div>
+      {applied ? (
+        <p className="text-[10px] text-emerald-600 font-medium">✓ Added to table — scroll right to see the column</p>
+      ) : (
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={onSandbox}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-clay-300"
+          >
+            <FlaskConical className="w-3 h-3" /> Sandbox
+          </button>
+          <button
+            type="button"
+            onClick={onApply}
+            className="flex-1 py-1.5 rounded-lg bg-clay-600 text-[10px] font-medium text-white hover:bg-clay-700"
+          >
+            Apply
+          </button>
+        </div>
+      )}
     </div>
   )
 }
