@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from claycomp.models import Record
 COLUMN_MAP = {
     "email": "email",
     "work_email": "email",
+    "corporate_email": "email",
+    "business_email": "email",
     "first_name": "first_name",
     "firstname": "first_name",
     "last_name": "last_name",
@@ -23,31 +26,49 @@ COLUMN_MAP = {
     "company": "company",
     "organization_name": "company",
     "company_name": "company",
+    "organization": "company",
     "city": "city",
     "state": "state",
     "country": "country",
     "location": "location",
     "linkedin_url": "linkedin_url",
     "person_linkedin_url": "linkedin_url",
+    "linkedin": "linkedin_url",
 }
 
 
 def _normalize_col(name: str) -> str:
-    return name.strip().lower().replace(" ", "_")
+    return name.strip().lstrip("\ufeff").lower().replace(" ", "_")
+
+
+def _identity_from_row(row: dict) -> str | None:
+    """Best stable identifier from raw CSV columns (handles Apollo header casing)."""
+    email: str | None = None
+    linkedin: str | None = None
+    for col, val in row.items():
+        if not val:
+            continue
+        norm = _normalize_col(str(col))
+        text = str(val).strip()
+        if norm in ("email", "work_email", "corporate_email", "business_email") and not email:
+            email = text.lower()
+        elif norm in ("linkedin_url", "person_linkedin_url", "linkedin") and not linkedin:
+            linkedin = text.lower()
+    return email or linkedin
 
 
 def _record_id(row: dict, index: int) -> str:
-    email = row.get("email") or row.get("work_email")
-    if email:
-        return hashlib.md5(str(email).lower().encode()).hexdigest()[:12]
-    return f"row-{index}"
+    """Unique per row — index suffix prevents duplicate-email collisions in the UI."""
+    identity = _identity_from_row(row)
+    basis = identity or "|".join(str(v) for v in row.values() if v) or f"row-{index}"
+    return hashlib.md5(f"{basis}:{index}".encode()).hexdigest()[:12]
 
 
-def load_csv(path: Path) -> list[Record]:
-    df = pd.read_csv(path, dtype=str).fillna("")
+def dataframe_to_records(df: pd.DataFrame) -> list[Record]:
+    df = df.fillna("")
     records: list[Record] = []
 
-    for i, row in df.iterrows():
+    for index, (_, row) in enumerate(df.iterrows()):
         mapped: dict[str, str] = {}
         raw = {str(k): ("" if pd.isna(v) else str(v)) for k, v in row.items()}
 
@@ -55,17 +76,26 @@ def load_csv(path: Path) -> list[Record]:
             norm = _normalize_col(col)
             field = COLUMN_MAP.get(norm)
             if field and val:
-                mapped[field] = val
+                mapped[field] = str(val)
 
         records.append(
             Record(
-                id=_record_id(raw, int(i)),
+                id=_record_id(raw, index),
                 raw=raw,
                 **{k: v or None for k, v in mapped.items()},
             )
         )
 
     return records
+
+
+def read_csv_bytes(data: bytes) -> pd.DataFrame:
+    return pd.read_csv(io.BytesIO(data), dtype=str, encoding="utf-8-sig", keep_default_na=False)
+
+
+def load_csv(path: Path) -> list[Record]:
+    df = pd.read_csv(path, dtype=str, encoding="utf-8-sig", keep_default_na=False)
+    return dataframe_to_records(df)
 
 
 def save_csv(records: list[Record], path: Path) -> None:

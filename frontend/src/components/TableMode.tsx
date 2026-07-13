@@ -97,7 +97,10 @@ export default function TableMode() {
   }
 
   const handleUpload = async (file: File) => {
-    const { records: next } = await uploadCsv(file)
+    const { records: next, count } = await uploadCsv(file)
+    if (count !== next.length) {
+      console.warn(`Import count mismatch: reported ${count}, received ${next.length}`)
+    }
     setRecords(next)
     setColumns([])
   }
@@ -215,7 +218,7 @@ export default function TableMode() {
             </thead>
             <tbody>
               {records.map((row, i) => (
-                <tr key={row.id} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''}`}>
+                <tr key={`${row.id}-${i}`} className={`border-b border-slate-100 hover:bg-white transition-colors ${sandboxCol && i < SANDBOX_ROWS ? 'bg-amber-50/30' : ''}`}>
                   <td className="px-3 py-2 text-xs text-slate-300 border-r border-slate-50">{i + 1}</td>
                   {SOURCE_COLUMNS.map((col) => (
                     <td key={col.key} className="px-3 py-2 text-slate-700 border-r border-slate-50 truncate max-w-[200px]">
