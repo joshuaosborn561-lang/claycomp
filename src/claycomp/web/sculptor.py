@@ -247,7 +247,9 @@ Rules:
 - Prefer sandbox before full runs
 - Use tools proactively — don't just describe what to do, DO it via tools
 - Be concise and actionable like Clay Sculptor
-- If business context is provided, tailor all recommendations to it"""
+- If business context is provided, tailor all recommendations to it
+- For column proposals: call propose_column OR recommend_columns ONCE per user message — never propose the same column twice
+- After proposing columns, stop — do not call proposal tools again in follow-up turns"""
 
 
 def _table_context(records: list[RecordDTO], columns: list[dict], business_context: str | None) -> str:
@@ -304,6 +306,13 @@ async def _run_sandbox_enrichment(
     return [record_to_dto(r) for r in recs]
 
 
+PROPOSAL_TOOL_NAMES = frozenset({"propose_column", "recommend_columns"})
+
+
+def _proposal_key(args: dict) -> str:
+    return f"{args.get('enricher_key', '')}::{args.get('column_name') or args.get('label', '')}".lower()
+
+
 async def _handle_tool(
     name: str,
     args: dict,
@@ -312,19 +321,31 @@ async def _handle_tool(
     columns: list[dict],
     provider: str | None,
     model: str | None,
+    seen_proposals: set[str] | None = None,
 ) -> AsyncIterator[dict]:
     if name == "propose_column":
+        key = _proposal_key(args)
+        if seen_proposals is not None and key in seen_proposals:
+            return
+        if seen_proposals is not None:
+            seen_proposals.add(key)
         yield {"type": "proposal", "proposal": args}
     elif name == "recommend_columns":
         yield {"type": "recommendations", "recommendations": args.get("recommendations", [])}
         for rec in args.get("recommendations", []):
-            yield {"type": "proposal", "proposal": {
+            proposal = {
                 "column_name": rec.get("column_name") or rec.get("enricher_key"),
                 "label": rec.get("label"),
                 "enricher_key": rec.get("enricher_key"),
                 "custom_prompt": rec.get("custom_prompt"),
                 "reasoning": rec.get("reason"),
-            }}
+            }
+            key = _proposal_key(proposal)
+            if seen_proposals is not None and key in seen_proposals:
+                continue
+            if seen_proposals is not None:
+                seen_proposals.add(key)
+            yield {"type": "proposal", "proposal": proposal}
     elif name == "propose_workflow":
         yield {"type": "workflow", "workflow": args}
     elif name == "analyze_table":
@@ -369,6 +390,7 @@ async def stream_sculptor(
             yield event
         return
 
+    seen_proposals: set[str] = set()
     for _ in range(6):
         try:
             result = await llm_complete(
@@ -390,10 +412,22 @@ async def stream_sculptor(
                 async for payload in _handle_tool(
                     call.name, call.arguments,
                     records=records, columns=columns, provider=provider, model=model,
+                    seen_proposals=seen_proposals,
                 ):
                     yield _sse(payload)
                     if payload.get("type") == "records":
                         records = [RecordDTO.model_validate(r) for r in payload["records"]]
+
+            if all(call.name in PROPOSAL_TOOL_NAMES for call in result.tool_calls):
+                if result.content:
+                    yield _sse({"type": "token", "content": result.content})
+                else:
+                    yield _sse({
+                        "type": "token",
+                        "content": "\n\nClick **Apply** to add the column to your table, or **Sandbox** to test on 3 rows first.",
+                    })
+                break
+
             llm_messages.append(LLMMessage(
                 role="user",
                 content=f"(Tools executed: {', '.join(executed)}. Summarize results for the user in 2-3 sentences.)",
