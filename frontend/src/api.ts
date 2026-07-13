@@ -1,6 +1,6 @@
 import type { ChatMessage, ColumnProposal, Enricher, LeadRecord, Provider, ProviderSettings } from './types'
 import type { SavedTable, TableMeta } from './persistence/localTables'
-import { EMPTY_API_KEY_STATUS, type ApiKeys, type ApiKeysStatus } from './keys'
+import { EMPTY_API_KEY_STATUS, apiKeyHeaders, type ApiKeys, type ApiKeysStatus } from './keys'
 
 const API = '/api'
 
@@ -13,7 +13,11 @@ export type EnrichOptions = {
 }
 
 function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  return fetch(input, init)
+  const headers = new Headers(init?.headers)
+  for (const [key, value] of Object.entries(apiKeyHeaders())) {
+    headers.set(key, value)
+  }
+  return fetch(input, { ...init, headers })
 }
 
 export async function fetchApiKeyStatus(): Promise<ApiKeysStatus> {

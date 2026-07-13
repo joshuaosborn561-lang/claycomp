@@ -1,6 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { fetchApiKeyStatus, fetchProviders, saveApiKeysRemote } from '../api'
-import { API_KEY_FIELDS, EMPTY_API_KEY_STATUS, type ApiKeys, type ApiKeysStatus } from '../keys'
+import {
+  API_KEY_FIELDS,
+  EMPTY_API_KEY_STATUS,
+  loadApiKeys,
+  mergeKeyStatus,
+  saveApiKeys,
+  type ApiKeys,
+  type ApiKeysStatus,
+} from '../keys'
 import { DEFAULT_PROVIDER_SETTINGS, type Provider, type ProviderSettings } from '../types'
 
 const STORAGE_KEY = 'claycomp-provider-settings'
@@ -31,7 +39,9 @@ function loadSettings(): ProviderSettings {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [settings, setSettingsState] = useState<ProviderSettings>(loadSettings)
-  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeysStatus>(EMPTY_API_KEY_STATUS)
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeysStatus>(() =>
+    mergeKeyStatus(EMPTY_API_KEY_STATUS, loadApiKeys()),
+  )
 
   const refreshProviders = useCallback(async () => {
     const list = await fetchProviders()
@@ -39,14 +49,25 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refreshApiKeys = useCallback(async () => {
-    const status = await fetchApiKeyStatus()
-    setApiKeyStatus(status)
+    const server = await fetchApiKeyStatus()
+    setApiKeyStatus(mergeKeyStatus(server, loadApiKeys()))
   }, [])
 
   useEffect(() => {
-    refreshProviders()
-    refreshApiKeys()
-  }, [refreshProviders, refreshApiKeys])
+    const init = async () => {
+      const local = loadApiKeys()
+      if (Object.keys(local).length) {
+        try {
+          await saveApiKeysRemote(local)
+        } catch {
+          /* server storage may be ephemeral on Vercel */
+        }
+      }
+      await refreshApiKeys()
+      await refreshProviders()
+    }
+    init()
+  }, [refreshApiKeys, refreshProviders])
 
   const setSettings = (s: ProviderSettings) => {
     setSettingsState(s)
@@ -54,8 +75,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }
 
   const setApiKeys = async (keys: ApiKeys) => {
+    saveApiKeys(keys)
     const status = await saveApiKeysRemote(keys)
-    setApiKeyStatus(status)
+    setApiKeyStatus(mergeKeyStatus(status, loadApiKeys()))
     await refreshProviders()
   }
 

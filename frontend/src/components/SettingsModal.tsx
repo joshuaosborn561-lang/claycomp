@@ -62,10 +62,10 @@ export default function SettingsModal({ open, onClose }: Props) {
               <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">API Keys</label>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              Keys are saved on the server ({apiKeyStatus.storage}) and shared across browsers. On Vercel,
-              add <code className="text-slate-500">UPSTASH_REDIS_REST_URL</code> and{' '}
-              <code className="text-slate-500">UPSTASH_REDIS_REST_TOKEN</code> for durable storage. Vercel
-              env vars are still used as a fallback.
+              Keys are saved in your browser and sent with each request. They also sync to the server
+              ({apiKeyStatus.storage}) when possible. For cross-device sync on Vercel, add{' '}
+              <code className="text-slate-500">UPSTASH_REDIS_REST_URL</code> and{' '}
+              <code className="text-slate-500">UPSTASH_REDIS_REST_TOKEN</code>.
             </p>
             <div className="space-y-3">
               {API_KEY_FIELDS.map((field) => {
