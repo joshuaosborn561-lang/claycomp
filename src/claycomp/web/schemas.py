@@ -115,6 +115,8 @@ class ApiKeyStatus(BaseModel):
 class ApiKeysStatusDTO(BaseModel):
     keys: dict[str, ApiKeyStatus]
     storage: str
+    setup_required: bool = False
+    setup_message: str | None = None
 
 
 class ApiKeysUpdate(BaseModel):

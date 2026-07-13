@@ -8,12 +8,24 @@ from typing import Any
 
 import httpx
 
+from claycomp.storage.redis_config import redis_configured, redis_credentials, storage_backend
+
 API_KEY_NAMES = (
     "OPENAI_API_KEY",
     "PERPLEXITY_API_KEY",
     "ANTHROPIC_API_KEY",
     "GOOGLE_PLACES_API_KEY",
 )
+
+STORAGE_SETUP_MESSAGE = (
+    "Durable storage is not configured on Vercel. In your Vercel project go to "
+    "Storage → Create Database → Redis (Upstash) → Connect to this project, then redeploy. "
+    "This only needs to be done once; API keys saved in Settings will persist permanently."
+)
+
+
+class StorageNotConfiguredError(RuntimeError):
+    pass
 
 
 def mask_api_key(value: str) -> str:
@@ -33,17 +45,12 @@ class ApiKeyStore(ABC):
 
 
 class FileApiKeyStore(ApiKeyStore):
+    """Local development only."""
+
     def __init__(self, path: Path | None = None):
-        if path is not None:
-            self.path = path
-        elif os.getenv("VERCEL"):
-            root = Path("/tmp/claycomp")
-            root.mkdir(parents=True, exist_ok=True)
-            self.path = root / "api_keys.json"
-        else:
-            root = Path(os.getenv("CLAYCOMP_DATA_DIR", "./data"))
-            root.mkdir(parents=True, exist_ok=True)
-            self.path = root / "api_keys.json"
+        root = Path(os.getenv("CLAYCOMP_DATA_DIR", "./data"))
+        root.mkdir(parents=True, exist_ok=True)
+        self.path = path or root / "api_keys.json"
 
     async def get_keys(self) -> dict[str, str]:
         if not self.path.exists():
@@ -66,9 +73,9 @@ class FileApiKeyStore(ApiKeyStore):
 
 
 class UpstashApiKeyStore(ApiKeyStore):
-    def __init__(self):
-        self.url = os.environ["UPSTASH_REDIS_REST_URL"]
-        self.token = os.environ["UPSTASH_REDIS_REST_TOKEN"]
+    def __init__(self, url: str, token: str):
+        self.url = url
+        self.token = token
         self.key = "claycomp:settings:api_keys"
 
     async def _cmd(self, *args: str) -> Any:
@@ -102,7 +109,18 @@ class UpstashApiKeyStore(ApiKeyStore):
         return current
 
 
+class UnconfiguredVercelApiKeyStore(ApiKeyStore):
+    async def get_keys(self) -> dict[str, str]:
+        return {}
+
+    async def save_keys(self, updates: dict[str, str]) -> dict[str, str]:
+        raise StorageNotConfiguredError(STORAGE_SETUP_MESSAGE)
+
+
 def get_api_key_store() -> ApiKeyStore:
-    if os.getenv("UPSTASH_REDIS_REST_URL") and os.getenv("UPSTASH_REDIS_REST_TOKEN"):
-        return UpstashApiKeyStore()
+    creds = redis_credentials()
+    if creds:
+        return UpstashApiKeyStore(*creds)
+    if os.getenv("VERCEL"):
+        return UnconfiguredVercelApiKeyStore()
     return FileApiKeyStore()

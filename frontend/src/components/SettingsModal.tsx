@@ -14,8 +14,13 @@ export default function SettingsModal({ open, onClose }: Props) {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
 
+  const [saveError, setSaveError] = useState<string | null>(null)
+
   useEffect(() => {
-    if (open) setDraftKeys({})
+    if (open) {
+      setDraftKeys({})
+      setSaveError(null)
+    }
   }, [open])
 
   if (!open) return null
@@ -24,6 +29,7 @@ export default function SettingsModal({ open, onClose }: Props) {
 
   const handleSaveKeys = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       const updates: ApiKeys = {}
       for (const field of API_KEY_FIELDS) {
@@ -34,6 +40,8 @@ export default function SettingsModal({ open, onClose }: Props) {
         await setApiKeys(updates)
         setDraftKeys({})
       }
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save API keys')
     } finally {
       setSaving(false)
     }
@@ -61,11 +69,14 @@ export default function SettingsModal({ open, onClose }: Props) {
               <Key className="w-3.5 h-3.5 text-slate-400" />
               <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">API Keys</label>
             </div>
+            {apiKeyStatus.setup_required && apiKeyStatus.setup_message && (
+              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 leading-relaxed">
+                {apiKeyStatus.setup_message}
+              </div>
+            )}
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              Keys are saved in your browser and sent with each request. They also sync to the server
-              ({apiKeyStatus.storage}) when possible. For cross-device sync on Vercel, add{' '}
-              <code className="text-slate-500">UPSTASH_REDIS_REST_URL</code> and{' '}
-              <code className="text-slate-500">UPSTASH_REDIS_REST_TOKEN</code>.
+              Keys are saved on the server ({apiKeyStatus.storage}) and persist across sessions once
+              storage is configured.
             </p>
             <div className="space-y-3">
               {API_KEY_FIELDS.map((field) => {
@@ -119,6 +130,9 @@ export default function SettingsModal({ open, onClose }: Props) {
                 )
               })}
             </div>
+            {saveError && (
+              <p className="mt-2 text-xs text-red-600 leading-relaxed">{saveError}</p>
+            )}
             {hasDraftChanges && (
               <button
                 onClick={handleSaveKeys}

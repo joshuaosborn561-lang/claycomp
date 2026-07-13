@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from claycomp.storage.redis_config import redis_credentials
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -87,9 +89,9 @@ class FileTableStore(TableStore):
 class UpstashTableStore(TableStore):
     """Redis-backed storage via Upstash REST API (works on Vercel)."""
 
-    def __init__(self):
-        self.url = os.environ["UPSTASH_REDIS_REST_URL"]
-        self.token = os.environ["UPSTASH_REDIS_REST_TOKEN"]
+    def __init__(self, url: str, token: str):
+        self.url = url
+        self.token = token
         self.prefix = "claycomp:table:"
         self.index_key = "claycomp:tables:index"
 
@@ -141,6 +143,7 @@ class UpstashTableStore(TableStore):
 
 
 def get_table_store() -> TableStore:
-    if os.getenv("UPSTASH_REDIS_REST_URL") and os.getenv("UPSTASH_REDIS_REST_TOKEN"):
-        return UpstashTableStore()
+    creds = redis_credentials()
+    if creds:
+        return UpstashTableStore(*creds)
     return FileTableStore()

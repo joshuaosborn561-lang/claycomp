@@ -50,7 +50,7 @@ cd frontend && npm run dev   # proxies /api → :8000, UI at :5173
 
 Full UI + API on Vercel (serverless Python for `/api/*`, static React for everything else).
 
-**Tables auto-save** as you work (records, columns, business context). Locally they persist in your browser + server files. On Vercel, add [Upstash Redis](https://upstash.com) for cloud persistence across devices.
+**Tables auto-save** as you work (records, columns, business context). Locally they persist in your browser + server files. On Vercel, connect **Upstash Redis** once for permanent server storage (API keys + tables). See [docs/VERCEL_STORAGE.md](docs/VERCEL_STORAGE.md).
 
 ```bash
 # 1. Install Vercel CLI and log in (opens browser)

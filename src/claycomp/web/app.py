@@ -29,7 +29,14 @@ from claycomp.web.schemas import (
     dto_to_record,
     record_to_dto,
 )
-from claycomp.storage.api_keys import API_KEY_NAMES, get_api_key_store, mask_api_key
+from claycomp.storage.api_keys import (
+    API_KEY_NAMES,
+    STORAGE_SETUP_MESSAGE,
+    StorageNotConfiguredError,
+    get_api_key_store,
+    mask_api_key,
+)
+from claycomp.storage.redis_config import storage_backend
 from claycomp.web.sculptor import stream_sculptor
 from claycomp.keys import bind_api_keys
 from claycomp.web.middleware import ApiKeysMiddleware
@@ -52,14 +59,14 @@ app.add_middleware(ApiKeysMiddleware)
 
 @app.get("/api/health")
 def health():
-    store = "upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file"
-    return {"ok": True, "storage": store}
+    return {"ok": True, "storage": storage_backend()}
 
 
 @app.get("/api/settings/keys", response_model=ApiKeysStatusDTO)
 async def get_api_keys_status():
     store = get_api_key_store()
     keys = await store.get_keys()
+    backend = storage_backend()
     return ApiKeysStatusDTO(
         keys={
             name: {
@@ -68,14 +75,20 @@ async def get_api_keys_status():
             }
             for name in API_KEY_NAMES
         },
-        storage="upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file",
+        storage=backend,
+        setup_required=backend == "unconfigured",
+        setup_message=STORAGE_SETUP_MESSAGE if backend == "unconfigured" else None,
     )
 
 
 @app.put("/api/settings/keys", response_model=ApiKeysStatusDTO)
 async def save_api_keys(body: ApiKeysUpdate):
     store = get_api_key_store()
-    saved = await store.save_keys(body.keys)
+    try:
+        saved = await store.save_keys(body.keys)
+    except StorageNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    backend = storage_backend()
     return ApiKeysStatusDTO(
         keys={
             name: {
@@ -84,7 +97,9 @@ async def save_api_keys(body: ApiKeysUpdate):
             }
             for name in API_KEY_NAMES
         },
-        storage="upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file",
+        storage=backend,
+        setup_required=backend == "unconfigured",
+        setup_message=STORAGE_SETUP_MESSAGE if backend == "unconfigured" else None,
     )
 
 

@@ -1,6 +1,6 @@
 import type { ChatMessage, ColumnProposal, Enricher, LeadRecord, Provider, ProviderSettings } from './types'
 import type { SavedTable, TableMeta } from './persistence/localTables'
-import { EMPTY_API_KEY_STATUS, apiKeyHeaders, type ApiKeys, type ApiKeysStatus } from './keys'
+import { EMPTY_API_KEY_STATUS, type ApiKeys, type ApiKeysStatus } from './keys'
 
 const API = '/api'
 
@@ -13,11 +13,7 @@ export type EnrichOptions = {
 }
 
 function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers)
-  for (const [key, value] of Object.entries(apiKeyHeaders())) {
-    headers.set(key, value)
-  }
-  return fetch(input, { ...init, headers })
+  return fetch(input, init)
 }
 
 export async function fetchApiKeyStatus(): Promise<ApiKeysStatus> {
@@ -36,7 +32,10 @@ export async function saveApiKeysRemote(keys: ApiKeys): Promise<ApiKeysStatus> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keys }),
   })
-  if (!res.ok) throw new Error('Failed to save API keys')
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.detail || 'Failed to save API keys')
+  }
   return res.json()
 }
 
