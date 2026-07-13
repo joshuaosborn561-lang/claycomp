@@ -107,6 +107,20 @@ class TableData(BaseModel):
     updated_at: str | None = None
 
 
+class ApiKeyStatus(BaseModel):
+    set: bool
+    masked: str | None = None
+
+
+class ApiKeysStatusDTO(BaseModel):
+    keys: dict[str, ApiKeyStatus]
+    storage: str
+
+
+class ApiKeysUpdate(BaseModel):
+    keys: dict[str, str] = Field(default_factory=dict)
+
+
 def dto_to_record(dto: RecordDTO) -> Record:
     return Record.model_validate(dto.model_dump())
 

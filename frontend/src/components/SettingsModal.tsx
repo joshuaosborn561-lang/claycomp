@@ -1,7 +1,7 @@
 import { Key, Settings, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { API_KEY_FIELDS } from '../keys'
-import { useSettings } from '../context/SettingsContext'
+import { API_KEY_FIELDS, type ApiKeys } from '../keys'
+import { isKeyConfigured, useSettings } from '../context/SettingsContext'
 
 type Props = {
   open: boolean
@@ -9,23 +9,37 @@ type Props = {
 }
 
 export default function SettingsModal({ open, onClose }: Props) {
-  const { providers, settings, setSettings, activeProvider, apiKeys, setApiKeys } = useSettings()
-  const [draftKeys, setDraftKeys] = useState(apiKeys)
+  const { providers, settings, setSettings, activeProvider, apiKeyStatus, setApiKeys } = useSettings()
+  const [draftKeys, setDraftKeys] = useState<ApiKeys>({})
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({})
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (open) setDraftKeys(apiKeys)
-  }, [open, apiKeys])
+    if (open) setDraftKeys({})
+  }, [open])
 
   if (!open) return null
 
   const selected = providers.find((p) => p.id === settings.providerId) || activeProvider
 
-  const handleSaveKeys = () => {
-    setApiKeys(draftKeys)
+  const handleSaveKeys = async () => {
+    setSaving(true)
+    try {
+      const updates: ApiKeys = {}
+      for (const field of API_KEY_FIELDS) {
+        const value = draftKeys[field.key]
+        if (value !== undefined) updates[field.key] = value
+      }
+      if (Object.keys(updates).length) {
+        await setApiKeys(updates)
+        setDraftKeys({})
+      }
+    } finally {
+      setSaving(false)
+    }
   }
 
-  const hasDraftChanges = JSON.stringify(draftKeys) !== JSON.stringify(apiKeys)
+  const hasDraftChanges = API_KEY_FIELDS.some((field) => draftKeys[field.key] !== undefined)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -48,44 +62,70 @@ export default function SettingsModal({ open, onClose }: Props) {
               <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">API Keys</label>
             </div>
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              Keys are stored in your browser only and sent with each request over HTTPS. Server env vars
-              are used as a fallback when a key is not set here.
+              Keys are saved on the server ({apiKeyStatus.storage}) and shared across browsers. On Vercel,
+              add <code className="text-slate-500">UPSTASH_REDIS_REST_URL</code> and{' '}
+              <code className="text-slate-500">UPSTASH_REDIS_REST_TOKEN</code> for durable storage. Vercel
+              env vars are still used as a fallback.
             </p>
             <div className="space-y-3">
-              {API_KEY_FIELDS.map((field) => (
-                <div key={field.key}>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-medium text-slate-600">{field.label}</label>
-                    <span className="text-[10px] text-slate-400">{field.hint}</span>
+              {API_KEY_FIELDS.map((field) => {
+                const configured = isKeyConfigured(apiKeyStatus, field.key)
+                const masked = apiKeyStatus.keys[field.key]?.masked
+                return (
+                  <div key={field.key}>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-medium text-slate-600">{field.label}</label>
+                      <span
+                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                          configured ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                        }`}
+                      >
+                        {configured ? masked || 'Saved' : 'Not set'}
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showKeys[field.key] ? 'text' : 'password'}
+                        value={draftKeys[field.key] ?? ''}
+                        onChange={(e) =>
+                          setDraftKeys((prev) => ({ ...prev, [field.key]: e.target.value }))
+                        }
+                        placeholder={
+                          configured
+                            ? `Replace ${masked || 'saved key'} (leave blank to keep)`
+                            : `Paste ${field.label} key`
+                        }
+                        className="w-full px-3 py-2 pr-16 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-clay-300"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowKeys((s) => ({ ...s, [field.key]: !s[field.key] }))}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-slate-600 px-2 py-1"
+                      >
+                        {showKeys[field.key] ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                    {configured && (
+                      <button
+                        type="button"
+                        onClick={() => setDraftKeys((prev) => ({ ...prev, [field.key]: '' }))}
+                        className="mt-1 text-[10px] text-red-500 hover:text-red-600"
+                      >
+                        Clear saved key
+                      </button>
+                    )}
                   </div>
-                  <div className="relative">
-                    <input
-                      type={showKeys[field.key] ? 'text' : 'password'}
-                      value={draftKeys[field.key] || ''}
-                      onChange={(e) =>
-                        setDraftKeys((prev) => ({ ...prev, [field.key]: e.target.value }))
-                      }
-                      placeholder={apiKeys[field.key] ? '••••••••' : `Paste ${field.label} key`}
-                      className="w-full px-3 py-2 pr-16 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-clay-300"
-                      autoComplete="off"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKeys((s) => ({ ...s, [field.key]: !s[field.key] }))}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-slate-600 px-2 py-1"
-                    >
-                      {showKeys[field.key] ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
             {hasDraftChanges && (
               <button
                 onClick={handleSaveKeys}
-                className="mt-3 w-full py-2 rounded-xl bg-clay-500 text-white text-sm font-medium hover:bg-clay-600 transition-colors"
+                disabled={saving}
+                className="mt-3 w-full py-2 rounded-xl bg-clay-500 text-white text-sm font-medium hover:bg-clay-600 transition-colors disabled:opacity-60"
               >
-                Save API keys
+                {saving ? 'Saving…' : 'Save API keys'}
               </button>
             )}
           </div>

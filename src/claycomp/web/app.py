@@ -18,6 +18,8 @@ from claycomp.models import Record
 from claycomp.records import load_csv_bytes, load_sample, records_from_dicts, records_to_csv_bytes, records_to_dicts
 from claycomp.web.chat import stream_chat
 from claycomp.web.schemas import (
+    ApiKeysStatusDTO,
+    ApiKeysUpdate,
     ChatRequest,
     EnrichRequest,
     EnricherInfo,
@@ -27,6 +29,7 @@ from claycomp.web.schemas import (
     dto_to_record,
     record_to_dto,
 )
+from claycomp.storage.api_keys import API_KEY_NAMES, get_api_key_store, mask_api_key
 from claycomp.web.sculptor import stream_sculptor
 from claycomp.web.middleware import ApiKeysMiddleware
 
@@ -50,6 +53,38 @@ app.add_middleware(ApiKeysMiddleware)
 def health():
     store = "upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file"
     return {"ok": True, "storage": store}
+
+
+@app.get("/api/settings/keys", response_model=ApiKeysStatusDTO)
+async def get_api_keys_status():
+    store = get_api_key_store()
+    keys = await store.get_keys()
+    return ApiKeysStatusDTO(
+        keys={
+            name: {
+                "set": bool(keys.get(name)),
+                "masked": mask_api_key(keys[name]) if keys.get(name) else None,
+            }
+            for name in API_KEY_NAMES
+        },
+        storage="upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file",
+    )
+
+
+@app.put("/api/settings/keys", response_model=ApiKeysStatusDTO)
+async def save_api_keys(body: ApiKeysUpdate):
+    store = get_api_key_store()
+    saved = await store.save_keys(body.keys)
+    return ApiKeysStatusDTO(
+        keys={
+            name: {
+                "set": bool(saved.get(name)),
+                "masked": mask_api_key(saved[name]) if saved.get(name) else None,
+            }
+            for name in API_KEY_NAMES
+        },
+        storage="upstash" if os.getenv("UPSTASH_REDIS_REST_URL") else "file",
+    )
 
 
 @app.get("/api/tables")
