@@ -49,7 +49,7 @@ class EnrichRequest(BaseModel):
     custom_prompt: str | None = None
     column_name: str | None = None
     business_context: str | None = None
-    cac_limit_usd: float | None = None
+    email_providers: list[str] | None = None
 
 
 class EnrichProgressEvent(BaseModel):
@@ -81,7 +81,6 @@ class SculptorRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     business_context: str | None = None
-    cac_limit_usd: float | None = None
 
 
 class ColumnProposal(BaseModel):
@@ -106,7 +105,7 @@ class TableData(BaseModel):
     records: list[RecordDTO] = Field(default_factory=list)
     columns: list[dict[str, Any]] = Field(default_factory=list)
     business_context: str | None = None
-    cac_limit_usd: float | None = 200
+    email_providers: list[str] | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

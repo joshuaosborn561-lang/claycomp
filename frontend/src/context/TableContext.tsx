@@ -22,13 +22,15 @@ import type { SavedTable, TableMeta } from '../persistence/localTables'
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'local' | 'error'
 
+export const DEFAULT_EMAIL_PROVIDERS = ['ai_ark', 'prospeo'] as const
+
 type TableContextValue = {
   tableId: string
   tableName: string
   records: LeadRecord[]
   columns: EnrichmentColumn[]
   businessContext: string
-  cacLimitUsd: number
+  emailProviders: string[]
   tables: TableMeta[]
   enrichers: Enricher[]
   saveStatus: SaveStatus
@@ -37,7 +39,7 @@ type TableContextValue = {
   setRecords: (records: LeadRecord[]) => void
   setColumns: (columns: EnrichmentColumn[]) => void
   setBusinessContext: (ctx: string) => void
-  setCacLimitUsd: (limit: number) => void
+  setEmailProviders: (providers: string[]) => void
   createTable: (name?: string) => Promise<void>
   switchTable: (id: string) => Promise<void>
   deleteTable: (id: string) => Promise<void>
@@ -45,13 +47,27 @@ type TableContextValue = {
 
 const TableContext = createContext<TableContextValue | null>(null)
 
+function normalizeEmailProviders(providers: string[] | null | undefined): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const p of providers || DEFAULT_EMAIL_PROVIDERS) {
+    const key = p.trim().toLowerCase()
+    if ((key === 'ai_ark' || key === 'prospeo') && !seen.has(key)) {
+      out.push(key)
+      seen.add(key)
+    }
+  }
+  if (!seen.has('ai_ark')) out.push('ai_ark')
+  return out.length ? out : [...DEFAULT_EMAIL_PROVIDERS]
+}
+
 function tableSnapshot(
   id: string,
   name: string,
   records: LeadRecord[],
   columns: EnrichmentColumn[],
   businessContext: string,
-  cacLimitUsd: number,
+  emailProviders: string[],
   created_at?: string,
 ): SavedTable {
   return {
@@ -60,7 +76,7 @@ function tableSnapshot(
     records,
     columns,
     business_context: businessContext,
-    cac_limit_usd: cacLimitUsd,
+    email_providers: emailProviders,
     created_at,
   }
 }
@@ -71,7 +87,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
   const [records, setRecordsState] = useState<LeadRecord[]>([])
   const [columns, setColumnsState] = useState<EnrichmentColumn[]>([])
   const [businessContext, setBusinessContextState] = useState('')
-  const [cacLimitUsd, setCacLimitUsdState] = useState(200)
+  const [emailProviders, setEmailProvidersState] = useState<string[]>([...DEFAULT_EMAIL_PROVIDERS])
   const [tables, setTables] = useState<TableMeta[]>([])
   const [enrichers, setEnrichers] = useState<Enricher[]>([])
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -85,7 +101,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
     setRecordsState(t.records)
     setColumnsState(t.columns || [])
     setBusinessContextState(t.business_context || '')
-    setCacLimitUsdState(typeof t.cac_limit_usd === 'number' ? t.cac_limit_usd : 200)
+    setEmailProvidersState(normalizeEmailProviders(t.email_providers))
     createdAtRef.current = t.created_at
     setActiveTableId(t.id)
   }
@@ -105,9 +121,9 @@ export function TableProvider({ children }: { children: ReactNode }) {
       recs: LeadRecord[],
       cols: EnrichmentColumn[],
       ctx: string,
-      cac: number,
+      providers: string[],
     ) => {
-      const snap = tableSnapshot(id, name, recs, cols, ctx, cac, createdAtRef.current)
+      const snap = tableSnapshot(id, name, recs, cols, ctx, providers, createdAtRef.current)
       setSaveStatus('saving')
       saveLocalTable(snap)
       const remote = await saveTableRemote(snap)
@@ -124,11 +140,11 @@ export function TableProvider({ children }: { children: ReactNode }) {
       recs: LeadRecord[],
       cols: EnrichmentColumn[],
       ctx: string,
-      cac: number,
+      providers: string[],
     ) => {
       if (!id) return
       if (saveTimer.current) clearTimeout(saveTimer.current)
-      saveTimer.current = setTimeout(() => persist(id, name, recs, cols, ctx, cac), 1200)
+      saveTimer.current = setTimeout(() => persist(id, name, recs, cols, ctx, providers), 1200)
     },
     [persist],
   )
@@ -170,28 +186,28 @@ export function TableProvider({ children }: { children: ReactNode }) {
 
   const setTableName = (name: string) => {
     setTableNameState(name)
-    scheduleSave(tableId, name, records, columns, businessContext, cacLimitUsd)
+    scheduleSave(tableId, name, records, columns, businessContext, emailProviders)
   }
 
   const setRecords = (recs: LeadRecord[]) => {
     setRecordsState(recs)
-    scheduleSave(tableId, tableName, recs, columns, businessContext, cacLimitUsd)
+    scheduleSave(tableId, tableName, recs, columns, businessContext, emailProviders)
   }
 
   const setColumns = (cols: EnrichmentColumn[]) => {
     setColumnsState(cols)
-    scheduleSave(tableId, tableName, records, cols, businessContext, cacLimitUsd)
+    scheduleSave(tableId, tableName, records, cols, businessContext, emailProviders)
   }
 
   const setBusinessContext = (ctx: string) => {
     setBusinessContextState(ctx)
-    scheduleSave(tableId, tableName, records, columns, ctx, cacLimitUsd)
+    scheduleSave(tableId, tableName, records, columns, ctx, emailProviders)
   }
 
-  const setCacLimitUsd = (limit: number) => {
-    const safe = Number.isFinite(limit) && limit > 0 ? limit : 200
-    setCacLimitUsdState(safe)
-    scheduleSave(tableId, tableName, records, columns, businessContext, safe)
+  const setEmailProviders = (providers: string[]) => {
+    const next = normalizeEmailProviders(providers)
+    setEmailProvidersState(next)
+    scheduleSave(tableId, tableName, records, columns, businessContext, next)
   }
 
   const createTable = async (name = 'New Table') => {
@@ -231,7 +247,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
         records,
         columns,
         businessContext,
-        cacLimitUsd,
+        emailProviders,
         tables,
         enrichers,
         saveStatus,
@@ -240,7 +256,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
         setRecords,
         setColumns,
         setBusinessContext,
-        setCacLimitUsd,
+        setEmailProviders,
         createTable,
         switchTable,
         deleteTable,

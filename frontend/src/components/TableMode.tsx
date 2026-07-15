@@ -4,6 +4,7 @@ import {
   FlaskConical,
   Hammer,
   Loader2,
+  Mail,
   Play,
   Plus,
   Sparkles,
@@ -36,10 +37,20 @@ const TEST_ROWS = 10
 export default function TableMode() {
   const { settings } = useSettings()
   const { track } = useJobs()
-  const { records, columns, enrichers, setRecords, setColumns, businessContext, cacLimitUsd } = useTable()
+  const {
+    records,
+    columns,
+    enrichers,
+    setRecords,
+    setColumns,
+    businessContext,
+    emailProviders,
+    setEmailProviders,
+  } = useTable()
   const sourceColumns = useMemo(() => sourceColumnsFromRecords(records), [records])
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [showSculptor, setShowSculptor] = useState(true)
+  const [showEmailProviders, setShowEmailProviders] = useState(false)
   const [previewColumn, setPreviewColumn] = useState<EnrichmentColumn | null>(null)
   const [runningCol, setRunningCol] = useState<string | null>(null)
   const [sandboxCol, setSandboxCol] = useState<string | null>(null)
@@ -73,24 +84,10 @@ export default function TableMode() {
     })
   }
 
-  const highTouchTargets = (all: typeof records) => {
-    const scored = all.filter((r) => {
-      const tier = r.enriched.research_tier as { score?: number; tier?: string } | undefined
-      if (!tier) return true
-      if (tier.tier === 'skip') return false
-      return (tier.score ?? 0) >= 40
-    })
-    return scored.length ? scored : all
-  }
-
   const runColumn = async (col: EnrichmentColumn, testRun = false) => {
     const enricherKey = col.enricherKey === 'custom' ? 'custom' : col.enricherKey
-    const expensive = enricherKey === 'personal_hook' || enricherKey === 'unique_offer'
-    let targets = records
-    if (testRun) targets = records.slice(0, TEST_ROWS)
-    else if (expensive) targets = highTouchTargets(records)
-    const rowIds = testRun || expensive ? targets.map((r) => r.id) : undefined
-    const total = targets.length
+    const rowIds = testRun ? records.slice(0, TEST_ROWS).map((r) => r.id) : undefined
+    const total = testRun ? Math.min(TEST_ROWS, records.length) : records.length
 
     setRunningCol(col.id)
     if (testRun) setSandboxCol(col.id)
@@ -129,7 +126,7 @@ export default function TableMode() {
             columnName: col.columnName || col.label,
             rowIds,
             businessContext,
-            cacLimitUsd,
+            emailProviders,
           },
           signal,
         ),
@@ -142,6 +139,36 @@ export default function TableMode() {
       setSandboxCol(null)
       setProgress(null)
     }
+  }
+
+  const addEmailWaterfall = () => {
+    addColumn({
+      id: `email-waterfall-${Date.now()}`,
+      enricherKey: 'email_waterfall',
+      label: 'Work Email',
+      columnName: 'email_waterfall',
+      provider: settings.providerId,
+      model: settings.model,
+    })
+  }
+
+  const toggleEmailProvider = (key: string) => {
+    if (key === 'ai_ark') return // always on
+    if (emailProviders.includes(key)) {
+      setEmailProviders(emailProviders.filter((p) => p !== key))
+    } else {
+      setEmailProviders([...emailProviders, key])
+    }
+  }
+
+  const moveEmailProvider = (key: string, dir: -1 | 1) => {
+    const idx = emailProviders.indexOf(key)
+    if (idx < 0) return
+    const next = [...emailProviders]
+    const swap = idx + dir
+    if (swap < 0 || swap >= next.length) return
+    ;[next[idx], next[swap]] = [next[swap], next[idx]]
+    setEmailProviders(next)
   }
 
   const testProposal = (col: EnrichmentColumn) => {
@@ -278,34 +305,92 @@ export default function TableMode() {
               Add column
             </button>
             <div className="relative">
-            <button
-              onClick={() => setShowAddMenu(!showAddMenu)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-clay-600 hover:bg-clay-700 text-white text-xs font-medium transition-colors shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add enrichment
-            </button>
-
-            {showAddMenu && (
-              <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-xl shadow-card border border-slate-200/80 z-20 overflow-hidden animate-fade-in">
-                <div className="px-3 py-2 border-b border-slate-100">
-                  <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">AI columns</p>
-                </div>
-                {enrichers.map((e) => (
+              <button
+                onClick={() => {
+                  setShowEmailProviders(!showEmailProviders)
+                  setShowAddMenu(false)
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:border-clay-300 hover:text-clay-700"
+                title="Email finder waterfall providers for this table"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                Email waterfall
+              </button>
+              {showEmailProviders && (
+                <div className="absolute right-0 top-full mt-1 w-80 bg-white rounded-xl shadow-card border border-slate-200/80 z-20 overflow-hidden animate-fade-in p-3 space-y-2">
+                  <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Providers (this table)</p>
+                  <p className="text-[10px] text-slate-400 leading-snug">
+                    Runs in order until an email is found. AI Ark always stays available — we use their sync export/single path (not Clay's broken trackId flow).
+                  </p>
+                  <ul className="space-y-1.5">
+                    {emailProviders.map((key, i) => (
+                      <li key={key} className="flex items-center gap-2 text-xs text-slate-700 bg-slate-50 rounded-lg px-2 py-1.5">
+                        <span className="text-[10px] text-slate-400 w-4">{i + 1}.</span>
+                        <span className="flex-1 font-medium">{key === 'ai_ark' ? 'AI Ark' : 'Prospeo'}</span>
+                        {key === 'ai_ark' ? (
+                          <span className="text-[9px] text-clay-600">required</span>
+                        ) : (
+                          <button type="button" onClick={() => toggleEmailProvider(key)} className="text-[10px] text-red-500">Remove</button>
+                        )}
+                        <button type="button" onClick={() => moveEmailProvider(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700" disabled={i === 0}>↑</button>
+                        <button type="button" onClick={() => moveEmailProvider(key, 1)} className="text-[10px] text-slate-400 hover:text-slate-700" disabled={i === emailProviders.length - 1}>↓</button>
+                      </li>
+                    ))}
+                  </ul>
+                  {!emailProviders.includes('prospeo') && (
+                    <button
+                      type="button"
+                      onClick={() => toggleEmailProvider('prospeo')}
+                      className="text-[11px] text-clay-700 hover:underline"
+                    >
+                      + Add Prospeo
+                    </button>
+                  )}
                   <button
-                    key={e.key}
-                    onClick={() => addBuiltInColumn(e)}
-                    className="w-full text-left px-3 py-2.5 hover:bg-clay-50 transition-colors flex items-start gap-2.5"
+                    type="button"
+                    onClick={() => {
+                      addEmailWaterfall()
+                      setShowEmailProviders(false)
+                    }}
+                    className="w-full mt-1 py-1.5 rounded-lg bg-clay-600 text-white text-[11px] font-medium hover:bg-clay-700"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-clay-500 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">{e.name}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">{e.description}</p>
-                    </div>
+                    Add Work Email column
                   </button>
-                ))}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setShowAddMenu(!showAddMenu)
+                  setShowEmailProviders(false)
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-clay-600 hover:bg-clay-700 text-white text-xs font-medium transition-colors shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add enrichment
+              </button>
+
+              {showAddMenu && (
+                <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-xl shadow-card border border-slate-200/80 z-20 overflow-hidden animate-fade-in">
+                  <div className="px-3 py-2 border-b border-slate-100">
+                    <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wide">AI columns</p>
+                  </div>
+                  {enrichers.map((e) => (
+                    <button
+                      key={e.key}
+                      onClick={() => addBuiltInColumn(e)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-clay-50 transition-colors flex items-start gap-2.5"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-clay-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-slate-800">{e.name}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">{e.description}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
