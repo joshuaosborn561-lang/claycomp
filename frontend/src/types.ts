@@ -115,6 +115,13 @@ export function formatCell(value: unknown): string {
   if (typeof value === 'object') {
     const v = value as Record<string, unknown>
     if (v.talking_point) return String(v.talking_point)
+    if (v.winner && typeof v.winner === 'object') {
+      const w = v.winner as Record<string, unknown>
+      const cost = w.estimated_cost_usd != null ? ` ($${w.estimated_cost_usd})` : ''
+      return `${w.title || w.idea || 'Offer'}${cost}`
+    }
+    if (v.best_hook) return String(v.best_hook)
+    if (v.tier != null && v.score != null) return `${v.tier} (${v.score})`
     if (v.how_to_reference) return String(v.how_to_reference)
     if (v.nickname) return String(v.nickname)
     if (v.snippet) return String(v.snippet)

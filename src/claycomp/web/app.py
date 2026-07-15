@@ -206,6 +206,8 @@ async def enrich_stream(req: EnrichRequest, request: Request):
         model=req.model,
         custom_prompt=req.custom_prompt,
         column_name=req.column_name,
+        business_context=req.business_context,
+        cac_limit_usd=req.cac_limit_usd,
     )
     records = [dto_to_record(r) for r in req.records]
     if req.row_ids:
@@ -280,6 +282,7 @@ async def sculptor_stream(req: SculptorRequest, request: Request):
             provider=req.provider,
             model=req.model,
             business_context=req.business_context,
+            cac_limit_usd=req.cac_limit_usd,
         ):
             yield event
 

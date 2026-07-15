@@ -27,11 +27,11 @@ import type {
 } from '../types'
 
 const STARTERS = [
+  'Find who is worth high-touch research, then invent unique offers under my CAC',
   'What enrichments should I add for cold outreach?',
   'Analyze my table — who should I prioritize?',
   'Build a full enrichment workflow for personalization',
   'Draft email openers for my top 3 leads',
-  'Run test: normalize names + find baseball teams',
   'Diagnose my table for issues',
 ]
 
@@ -82,13 +82,13 @@ type Props = {
 export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, onClearPreview }: Props) {
   const { settings } = useSettings()
   const { track } = useJobs()
-  const { records, columns, businessContext, setBusinessContext } = useTable()
+  const { records, columns, businessContext, setBusinessContext, cacLimitUsd, setCacLimitUsd } = useTable()
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
       role: 'assistant',
       content:
-        "I'm **Sculptor** — your GTM co-pilot. I can recommend enrichments, build workflows, analyze your data, draft outreach, run tests, and troubleshoot — like Clay.\n\nSet your **business context** below so I tailor everything to your ICP.",
+        "I'm **Sculptor** — your GTM co-pilot. I can recommend enrichments, build workflows, analyze your data, draft outreach, run high-touch research offers (Mars CEO flower style, CAC-capped), and troubleshoot.\n\nSet your **business context** and **Max CAC / gift budget** below so offers stay profitable.",
     },
   ])
   const [input, setInput] = useState('')
@@ -230,6 +230,7 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
           settings,
           businessContext,
           signal,
+          cacLimitUsd,
         )
       })
 
@@ -275,13 +276,31 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
           {showContext ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
         </button>
         {showContext && (
-          <textarea
-            value={businessContext}
-            onChange={(e) => setBusinessContext(e.target.value)}
-            placeholder="We sell to VP Sales at B2B SaaS companies in the US. Our tone is casual and direct..."
-            rows={3}
-            className="mt-1.5 w-full text-[10px] px-2 py-1.5 rounded-lg border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-clay-300"
-          />
+          <div className="mt-1.5 space-y-1.5">
+            <textarea
+              value={businessContext}
+              onChange={(e) => setBusinessContext(e.target.value)}
+              placeholder="We sell to VP Sales at B2B SaaS companies in the US. Our tone is casual and direct..."
+              rows={3}
+              className="w-full text-[10px] px-2 py-1.5 rounded-lg border border-slate-200 resize-none focus:outline-none focus:ring-1 focus:ring-clay-300"
+            />
+            <label className="flex items-center justify-between gap-2 text-[10px] text-slate-500">
+              <span>Max CAC / gift budget</span>
+              <span className="flex items-center gap-1">
+                $
+                <input
+                  type="number"
+                  min={1}
+                  value={cacLimitUsd}
+                  onChange={(e) => setCacLimitUsd(Number(e.target.value))}
+                  className="w-16 px-1.5 py-1 rounded border border-slate-200 text-[10px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-clay-300"
+                />
+              </span>
+            </label>
+            <p className="text-[9px] text-slate-400 leading-snug">
+              Unique offers never exceed this. If someone loves Rolexes and CAC is $200, we find a cheaper proxy that hits the same emotion.
+            </p>
+          </div>
         )}
       </div>
 

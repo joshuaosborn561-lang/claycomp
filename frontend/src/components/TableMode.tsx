@@ -36,7 +36,7 @@ const TEST_ROWS = 10
 export default function TableMode() {
   const { settings } = useSettings()
   const { track } = useJobs()
-  const { records, columns, enrichers, setRecords, setColumns } = useTable()
+  const { records, columns, enrichers, setRecords, setColumns, businessContext, cacLimitUsd } = useTable()
   const sourceColumns = useMemo(() => sourceColumnsFromRecords(records), [records])
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [showSculptor, setShowSculptor] = useState(true)
@@ -73,10 +73,24 @@ export default function TableMode() {
     })
   }
 
+  const highTouchTargets = (all: typeof records) => {
+    const scored = all.filter((r) => {
+      const tier = r.enriched.research_tier as { score?: number; tier?: string } | undefined
+      if (!tier) return true
+      if (tier.tier === 'skip') return false
+      return (tier.score ?? 0) >= 40
+    })
+    return scored.length ? scored : all
+  }
+
   const runColumn = async (col: EnrichmentColumn, testRun = false) => {
     const enricherKey = col.enricherKey === 'custom' ? 'custom' : col.enricherKey
-    const rowIds = testRun ? records.slice(0, TEST_ROWS).map((r) => r.id) : undefined
-    const total = testRun ? Math.min(TEST_ROWS, records.length) : records.length
+    const expensive = enricherKey === 'personal_hook' || enricherKey === 'unique_offer'
+    let targets = records
+    if (testRun) targets = records.slice(0, TEST_ROWS)
+    else if (expensive) targets = highTouchTargets(records)
+    const rowIds = testRun || expensive ? targets.map((r) => r.id) : undefined
+    const total = targets.length
 
     setRunningCol(col.id)
     if (testRun) setSandboxCol(col.id)
@@ -114,6 +128,8 @@ export default function TableMode() {
             customPrompt: col.customPrompt,
             columnName: col.columnName || col.label,
             rowIds,
+            businessContext,
+            cacLimitUsd,
           },
           signal,
         ),
