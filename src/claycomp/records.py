@@ -5,14 +5,27 @@ from pathlib import Path
 
 import pandas as pd
 
-from claycomp.io import COLUMN_MAP, dataframe_to_records, load_csv, read_csv_bytes
+from claycomp.io import dataframe_to_records, load_csv, read_csv_bytes, read_table_bytes
 from claycomp.models import Record
 
-__all__ = ["load_csv", "load_csv_bytes", "records_to_dicts", "records_from_dicts", "records_to_csv_bytes"]
+__all__ = [
+    "load_csv",
+    "load_csv_bytes",
+    "load_table_bytes",
+    "records_to_dicts",
+    "records_from_dicts",
+    "records_to_csv_bytes",
+]
 
 
 def load_csv_bytes(data: bytes) -> list[Record]:
     df = read_csv_bytes(data)
+    return dataframe_to_records(df)
+
+
+def load_table_bytes(data: bytes, filename: str | None = None) -> list[Record]:
+    """Load records from CSV or Excel (.xlsx / .xlsm / .xls) bytes."""
+    df = read_table_bytes(data, filename=filename)
     return dataframe_to_records(df)
 
 

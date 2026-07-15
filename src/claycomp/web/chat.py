@@ -85,7 +85,7 @@ def _sse(payload: dict) -> str:
 
 def _build_context(records: list[RecordDTO]) -> str:
     if not records:
-        return "No leads loaded yet. The user can upload a CSV or load sample data."
+        return "No leads loaded yet. The user can upload a CSV/Excel file or load sample data."
 
     lines = [f"Loaded {len(records)} leads. Sample:"]
     for r in records[:5]:

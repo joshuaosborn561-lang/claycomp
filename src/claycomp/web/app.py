@@ -15,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from claycomp.enrichers import ENRICHERS, get_enricher
 from claycomp.llm import list_providers
 from claycomp.models import Record
-from claycomp.records import load_csv_bytes, load_sample, records_from_dicts, records_to_csv_bytes, records_to_dicts
+from claycomp.io import table_bytes_to_csv_bytes
+from claycomp.records import load_sample, load_table_bytes, records_from_dicts, records_to_csv_bytes, records_to_dicts
 from claycomp.web.chat import stream_chat
 from claycomp.web.schemas import (
     ApiKeysStatusDTO,
@@ -174,11 +175,37 @@ def list_enrichers():
 
 
 @app.post("/api/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_table(file: UploadFile = File(...)):
+    """Import a CSV or Excel (.xlsx / .xlsm / .xls) lead list."""
     data = await file.read()
-    records = load_csv_bytes(data)
+    try:
+        records = load_table_bytes(data, filename=file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     columns = list(records[0].raw.keys()) if records else []
-    return {"records": records_to_dicts(records), "count": len(records), "columns": columns}
+    return {
+        "records": records_to_dicts(records),
+        "count": len(records),
+        "columns": columns,
+        "filename": file.filename,
+        "format": "excel" if (file.filename or "").lower().endswith((".xlsx", ".xlsm", ".xls")) else "csv",
+    }
+
+
+@app.post("/api/convert-to-csv")
+async def convert_to_csv(file: UploadFile = File(...)):
+    """Digest an Excel/CSV upload and return UTF-8 CSV bytes."""
+    data = await file.read()
+    try:
+        content = table_bytes_to_csv_bytes(data, filename=file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    stem = Path(file.filename or "export").stem or "export"
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.csv"'},
+    )
 
 
 @app.get("/api/sample")

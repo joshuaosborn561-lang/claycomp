@@ -11,7 +11,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
-import { exportCsv, streamEnrich, uploadCsv } from '../api'
+import { exportCsv, streamEnrich, tableUploadAccept, uploadCsv } from '../api'
 import EditableCell from './EditableCell'
 import EditableHeader from './EditableHeader'
 import { isAbortError, useJobs } from '../context/JobsContext'
@@ -178,13 +178,17 @@ export default function TableMode() {
   }
 
   const handleUpload = async (file: File) => {
-    const { records: next, count } = await uploadCsv(file)
-    if (count !== next.length) {
-      console.warn(`Import count mismatch: reported ${count}, received ${next.length}`)
+    try {
+      const { records: next, count } = await uploadCsv(file)
+      if (count !== next.length) {
+        console.warn(`Import count mismatch: reported ${count}, received ${next.length}`)
+      }
+      setRecords(next)
+      setColumns([])
+      setPreviewColumn(null)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Upload failed')
     }
-    setRecords(next)
-    setColumns([])
-    setPreviewColumn(null)
   }
 
   const handleExport = async () => {
@@ -258,7 +262,7 @@ export default function TableMode() {
 
         <div className="p-3 flex flex-col gap-1.5">
           <SidebarButton icon={<Upload className="w-3.5 h-3.5" />} onClick={() => fileRef.current?.click()}>
-            Import CSV
+            Import CSV / Excel
           </SidebarButton>
           <SidebarButton icon={<Download className="w-3.5 h-3.5" />} onClick={handleExport}>
             Export CSV
@@ -491,7 +495,7 @@ export default function TableMode() {
           {records.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-3">
               <Upload className="w-8 h-8 opacity-40" />
-              <p className="text-sm">Import a CSV or add a row to get started</p>
+              <p className="text-sm">Import a CSV/Excel file or add a row to get started</p>
               <button
                 onClick={handleAddRow}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:border-clay-300"
@@ -513,7 +517,7 @@ export default function TableMode() {
         />
       )}
 
-      <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={(e) => {
+      <input ref={fileRef} type="file" accept={tableUploadAccept()} className="hidden" onChange={(e) => {
         const file = e.target.files?.[0]
         if (file) handleUpload(file)
         e.target.value = ''
