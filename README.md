@@ -1,6 +1,6 @@
 # Claycomp
 
-AI-powered lead enrichment — a lightweight Clay alternative. Import Apollo CSVs, run enrichment columns, export personalized data for cold outreach.
+AI-powered lead enrichment — a lightweight Clay alternative. Import Apollo CSVs or Excel (`.xlsx` / `.xls`), run enrichment columns, export personalized data for cold outreach.
 
 ## What it does
 
@@ -22,7 +22,7 @@ Claycomp has two modes — switch with the toggle in the header:
 
 | Mode | Vibe | Best for |
 |------|------|----------|
-| **Table** | Clay-style spreadsheet with AI enrichment columns | Import CSV, add columns, run enrichments, export |
+| **Table** | Clay-style spreadsheet with AI enrichment columns | Import CSV/Excel, add columns, run enrichments, export |
 | **Chat** | ChatGPT-style assistant | Natural language: "enrich all with baseball teams", ask for openers |
 | **Sculptor** | Clay-style co-pilot (in Table mode) | Describe enrichments in plain English, get column proposals, sandbox test before applying |
 

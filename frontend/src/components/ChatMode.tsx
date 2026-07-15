@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUp, Paperclip, Sparkles, Upload } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import { loadSample, streamChat, uploadCsv } from '../api'
+import { loadSample, streamChat, tableUploadAccept, uploadCsv } from '../api'
 import { isAbortError, useJobs } from '../context/JobsContext'
 import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
@@ -25,7 +25,7 @@ export default function ChatMode(_props: Props) {
       id: 'welcome',
       role: 'assistant',
       content:
-        "Hey! I'm your enrichment assistant. Upload a CSV or use the sample data, then ask me to enrich leads, write openers, or answer questions about your list.\n\nTry: *\"Enrich all leads with nearest baseball team\"*",
+        "Hey! I'm your enrichment assistant. Upload a CSV or Excel file (or use the sample data), then ask me to enrich leads, write openers, or answer questions about your list.\n\nTry: *\"Enrich all leads with nearest baseball team\"*",
     },
   ])
   const [input, setInput] = useState('')
@@ -91,16 +91,27 @@ export default function ChatMode(_props: Props) {
   }
 
   const handleUpload = async (file: File) => {
-    const { records: next, count } = await uploadCsv(file)
-    setRecords(next)
-    setMessages((m) => [
-      ...m,
-      {
-        id: `sys-${Date.now()}`,
-        role: 'assistant',
-        content: `Loaded **${count} leads** from \`${file.name}\`. What would you like to enrich?`,
-      },
-    ])
+    try {
+      const { records: next, count } = await uploadCsv(file)
+      setRecords(next)
+      setMessages((m) => [
+        ...m,
+        {
+          id: `sys-${Date.now()}`,
+          role: 'assistant',
+          content: `Loaded **${count} leads** from \`${file.name}\`. What would you like to enrich?`,
+        },
+      ])
+    } catch (err) {
+      setMessages((m) => [
+        ...m,
+        {
+          id: `sys-${Date.now()}`,
+          role: 'assistant',
+          content: `Could not import \`${file.name}\`: ${err instanceof Error ? err.message : 'Upload failed'}`,
+        },
+      ])
+    }
   }
 
   return (
@@ -144,7 +155,7 @@ export default function ChatMode(_props: Props) {
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
           >
             <Paperclip className="w-3 h-3" />
-            Upload CSV
+            Upload CSV / Excel
           </button>
           <button
             onClick={async () => {
@@ -194,7 +205,7 @@ export default function ChatMode(_props: Props) {
       <input
         ref={fileRef}
         type="file"
-        accept=".csv"
+        accept={tableUploadAccept()}
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0]

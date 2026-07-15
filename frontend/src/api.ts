@@ -83,12 +83,45 @@ export async function fetchEnrichers(): Promise<Enricher[]> {
   return res.json()
 }
 
+const TABLE_UPLOAD_ACCEPT = '.csv,.tsv,.txt,.xlsx,.xlsm,.xls'
+
+export function tableUploadAccept(): string {
+  return TABLE_UPLOAD_ACCEPT
+}
+
 export async function uploadCsv(file: File): Promise<{ records: LeadRecord[]; count: number }> {
   const form = new FormData()
   form.append('file', file)
   const res = await apiFetch(`${API}/upload`, { method: 'POST', body: form })
-  if (!res.ok) throw new Error('Upload failed')
+  if (!res.ok) {
+    let detail = 'Upload failed'
+    try {
+      const body = await res.json()
+      if (typeof body?.detail === 'string') detail = body.detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
   return res.json()
+}
+
+/** Convert Excel/CSV on the server and download as CSV. */
+export async function convertFileToCsv(file: File): Promise<Blob> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await apiFetch(`${API}/convert-to-csv`, { method: 'POST', body: form })
+  if (!res.ok) {
+    let detail = 'Conversion failed'
+    try {
+      const body = await res.json()
+      if (typeof body?.detail === 'string') detail = body.detail
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail)
+  }
+  return res.blob()
 }
 
 export async function loadSample(): Promise<{ records: LeadRecord[]; count: number }> {
