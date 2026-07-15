@@ -9,6 +9,11 @@ from claycomp.llm import LLMMessage, llm_complete, llm_stream
 from claycomp.llm.errors import format_llm_error
 from claycomp.web.sculptor_analytics import analyze_table, estimate_credits
 from claycomp.web.schemas import ChatMessage, RecordDTO, dto_to_record, record_to_dto
+from claycomp.web.table_knowledge import (
+    answer_table_query,
+    build_table_knowledge,
+    knowledge_to_prompt_block,
+)
 
 TEST_ROWS = 10
 
@@ -29,6 +34,14 @@ SCULPTOR_TOOLS = [
                     "label": {"type": "string"},
                     "enricher_key": {"type": "string", "enum": list(ENRICHERS.keys()) + ["custom"]},
                     "custom_prompt": {"type": "string"},
+                    "skip_if_output_filled": {
+                        "type": "boolean",
+                        "description": "Skip rows that already have a value in this column",
+                    },
+                    "skip_if_source_filled": {
+                        "type": "string",
+                        "description": "Skip rows where this source field is already filled (e.g. 'email')",
+                    },
                     "reasoning": {"type": "string"},
                 },
                 "required": ["column_name", "label", "enricher_key", "reasoning"],
@@ -202,7 +215,7 @@ SCULPTOR_TOOLS = [
         "type": "function",
         "function": {
             "name": "edit_column_prompt",
-            "description": "Suggest an improved prompt or config for an existing custom column",
+            "description": "Suggest an improved prompt for an existing custom column",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -214,49 +227,88 @@ SCULPTOR_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_table",
+            "description": (
+                "Look up hard facts from the loaded table knowledge base. "
+                "ALWAYS call this before answering questions about the data "
+                "(counts, missing emails, companies, titles, who to prioritize, what columns exist)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The user's question or the fact you need to verify",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "configure_column",
+            "description": (
+                "Update an existing enrichment column's settings — AI prompt and/or Clay-style run conditions "
+                "(e.g. skip if email already filled). Use when the user wants to tweak how a column behaves."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "column_label": {"type": "string"},
+                    "custom_prompt": {"type": "string"},
+                    "skip_if_output_filled": {"type": "boolean"},
+                    "skip_if_source_filled": {
+                        "type": "string",
+                        "description": "Source field to check, e.g. 'email'. Empty string clears the rule.",
+                    },
+                    "require_source_fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "reasoning": {"type": "string"},
+                },
+                "required": ["column_label", "reasoning"],
+            },
+        },
+    },
 ]
 
-SCULPTOR_SYSTEM = f"""You are Sculptor — Clay's GTM co-pilot, rebuilt for Claycomp lead tables.
+SCULPTOR_SYSTEM = f"""You are Sculptor — the Claycomp table co-pilot. You act as BOTH:
+1) a knowledgeable chatbot that answers questions about the loaded table using the TABLE KNOWLEDGE BASE, and
+2) an architect that proposes/configures enrichment columns and workflows.
 
-You can do everything Clay Sculptor does for table workflows:
+## Dual mode (pick the right one)
+**CHAT / analyst mode** — when the user asks a question, wants an explanation, analysis, counts, diagnostics, drafts, or advice:
+- Call query_table first (and analyze_table / diagnose_table when useful)
+- Answer with concrete numbers, names, and companies from the knowledge base
+- Do NOT propose new columns unless they clearly ask to add/build/enrich/find a field
+- Write a solid, useful answer in natural language (2–8 short sentences or bullets)
 
-**List & table building**
-- Recommend enrichments based on table data
-- Propose single columns or full multi-step workflows
-- Configure custom AI prompts (Claygent-style)
+**ARCHITECT mode** — when the user asks to add/build/fill/find a field, create a workflow, or change column settings:
+- propose_column / recommend_columns / propose_workflow / configure_column / edit_column_prompt
+- For email finder / waterfall: propose email_waterfall once, and set skip_if_source_filled to "email" when they want to avoid re-finding known emails
+- Prefer configure_column when they want to tweak an EXISTING column (prompt or run conditions)
+- After proposing, stop — do not spam more proposals
 
-**Analyst mode**
-- Query the table: patterns, segments, who to prioritize
-- Use analyze_table with real insights from the data
-
-**Enrichment ops**
-- propose_column / recommend_columns / propose_workflow
-- execute_sandbox is only for when the user explicitly asks you to run a test — never call it automatically
-- diagnose_table when user has errors or missing data
-- estimate_cost before large runs
-
-**Outreach**
-- draft_outreach: personalized email openers using enrichments + lead data
-- Reference actual names, companies, locations from the table
-
-**Formulas & config**
-- edit_column_prompt to refine AI column prompts
-
+## Capabilities
 Built-in enrichers:
 {ENRICHERS_DOC}
 
-Rules:
-- Always reference actual table data (names, companies, locations)
-- Prefer test runs before full runs — but the user clicks Test in the UI; do not run enrichments yourself
-- Use tools proactively — don't just describe what to do, DO it via tools (except enrichments: propose columns only, never auto-run)
-- Be concise and actionable like Clay Sculptor
-- If business context is provided, tailor all recommendations to it
-- For column proposals: call propose_column OR recommend_columns ONCE per user message — never propose the same column twice
-- After proposing columns, stop — do not call proposal tools again in follow-up turns
-- When the user asks to fill/find/add ONE field (e.g. location), call propose_column exactly ONCE — do NOT use recommend_columns and do NOT suggest other fields
-- When the user asks for work emails / email finder / waterfall, propose_column with enricher_key email_waterfall once
-- recommend_columns is only for broad "what should I add?" questions — maximum 1 item, never duplicate topics
-- Never create multiple columns for the same purpose (e.g. one "Location" column, not "Location" + "Full Location" + "Filled Location")"""
+Also: draft_outreach, estimate_cost, execute_sandbox (only if they explicitly ask to test).
+
+## Hard rules
+- Ground every data claim in the knowledge base / query_table results — never invent row counts or company names
+- Prefer real names/companies/titles from the sample leads
+- Never auto-run enrichments; the user clicks Test/Play in the UI
+- One proposal max for a specific field request; recommend_columns only for open-ended "what should I add?"
+- Never create duplicate columns for the same purpose
+- If business context is provided, tailor recommendations and drafts to it
+- Be concise, specific, and helpful — like a sharp Clay Sculptor"""
 
 
 def _table_context(
@@ -264,31 +316,8 @@ def _table_context(
     columns: list[dict],
     business_context: str | None,
 ) -> str:
-    stats = analyze_table(records, columns)
-    lines = [
-        f"Table: {stats['row_count']} rows",
-        f"Outreach-ready score: {stats.get('outreach_ready_score', 0)}%",
-        f"Field completeness: {json.dumps(stats.get('completeness_pct', {}))}",
-    ]
-    if columns:
-        lines.append("Configured columns: " + ", ".join(c.get("label", "?") for c in columns))
-    if stats.get("enrichment_columns"):
-        lines.append("Enriched fields: " + ", ".join(stats["enrichment_columns"]))
-    if business_context:
-        lines.append(f"\nBusiness context:\n{business_context}")
-    lines.append("\nLeads:")
-    for r in records[:8]:
-        loc = r.location or ", ".join(p for p in [r.city, r.state] if p) or "?"
-        name = r.full_name or r.first_name or r.email or r.id
-        line = f"- [{r.id}] {name}: {r.title or '?'} @ {r.company or '?'}, {loc}"
-        if r.enriched:
-            previews = [f"{k}={v}" for k, v in list(r.enriched.items())[:4] if not k.endswith("_error")]
-            if previews:
-                line += " | " + "; ".join(previews)
-        lines.append(line)
-    if len(records) > 8:
-        lines.append(f"... +{len(records) - 8} more rows")
-    return "\n".join(lines)
+    kb = build_table_knowledge(records, columns, business_context)
+    return knowledge_to_prompt_block(kb)
 
 
 async def _run_sandbox_enrichment(
@@ -357,7 +386,12 @@ FALLBACK_PROPOSALS: dict[str, dict[str, str]] = {
         "column_name": "email_waterfall",
         "label": "Work Email",
         "enricher_key": "email_waterfall",
-        "reasoning": "Find work emails via the table email waterfall (AI Ark + Prospeo).",
+        "skip_if_output_filled": True,
+        "skip_if_source_filled": "email",
+        "reasoning": (
+            "Find work emails via the email waterfall (AI Ark + Prospeo). "
+            "Skips rows that already have an email."
+        ),
     },
 }
 
@@ -442,10 +476,32 @@ def _extract_primary_topic(text: str) -> str | None:
 
 def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
     last = next((m.content for m in reversed(messages) if m.role == "user"), "")
-    text = last.lower()
+    text = last.lower().strip()
     specific_verbs = (
         "fill in", "look up", "lookup", "find", "get", "add", "figure out",
         "populate", "enrich", "search for", "try to fill", "try to find",
+        "create column", "build column", "propose", "set up", "setup",
+        "configure", "skip if", "don't run", "do not run", "dont run",
+    )
+    question_signals = (
+        "?", "what ", "what's", "whats", "how ", "why ", "which ", "who ",
+        "tell me", "explain", "analyze", "analyse", "look at", "show me",
+        "how many", "how much", "summarize", "summary", "diagnose",
+        "help me understand", "can you explain",
+    )
+    build_signals = (
+        "add ", "propose", "build", "create", "fill in", "fill the",
+        "enrich with", "enrich my", "find email", "email waterfall",
+        "email finder", "workflow", "configure", "skip if", "change the prompt",
+        "update the prompt", "edit the prompt",
+    )
+    wants_configure = any(
+        w in text
+        for w in (
+            "skip if", "don't run", "do not run", "dont run",
+            "configure", "change the prompt", "update the prompt",
+            "edit the prompt", "column settings",
+        )
     )
     primary_topic = _infer_topic_from_message(last)
     contextual_topics = {"name", "company", "email"}
@@ -457,24 +513,50 @@ def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
         non_context = [t for t in salient_topics if t not in contextual_topics]
         if len(non_context) == 1:
             primary_topic = non_context[0]
-    is_specific = primary_topic is not None
+    is_question = any(s in text for s in question_signals)
+    wants_build = any(s in text for s in build_signals) or wants_configure
+    # Questions like "what enrichments should I add?" are architect+chat
+    open_ended_recs = any(
+        s in text
+        for s in ("what enrichment", "what should i add", "recommend", "suggestions")
+    )
+    is_specific = primary_topic is not None and (wants_build or not is_question)
     is_workflow = any(w in text for w in ("workflow", "full enrichment", "build a", "all enrichments"))
+    mode = "architect" if (wants_build or is_specific or is_workflow or open_ended_recs) else "chat"
+    if is_question and not wants_build and not open_ended_recs:
+        mode = "chat"
+        is_specific = False
     cap = 1
-    hint = (
-        (
+    if mode == "chat":
+        hint = (
+            "USER INTENT: CHAT / analyst mode. Answer using query_table + the knowledge base. "
+            "Do NOT call propose_column or recommend_columns unless they explicitly ask to add a column."
+        )
+    elif wants_configure:
+        hint = (
+            "USER INTENT: Configure an existing column. Prefer configure_column "
+            "(e.g. skip_if_source_filled='email'). Do not add duplicate columns."
+        )
+    elif is_specific and primary_topic:
+        hint = (
             f"USER INTENT: They asked specifically to enrich **{primary_topic}** only. "
             f"Call propose_column exactly once for {primary_topic}. "
             "Do not use recommend_columns. Do not suggest other fields."
         )
-        if is_specific and primary_topic
-        else None
-    )
+    elif open_ended_recs:
+        hint = (
+            "USER INTENT: Open-ended recommendations. Call query_table, then recommend_columns "
+            "(max 1) grounded in table gaps."
+        )
+    else:
+        hint = None
     return {
         "cap": cap,
         "primary_topic": primary_topic,
         "topics": salient_topics,
         "is_specific": is_specific,
         "is_workflow": is_workflow,
+        "mode": mode,
         "hint": hint,
     }
 
@@ -608,6 +690,28 @@ async def _handle_tool(
         yield {"type": "cost_estimate", "estimate": est, "summary": args.get("summary", "")}
     elif name == "edit_column_prompt":
         yield {"type": "edit_prompt", "edit": args}
+        yield {"type": "column_config", "config": {
+            "column_label": args.get("column_label"),
+            "improved_prompt": args.get("improved_prompt"),
+            "reasoning": args.get("reasoning"),
+        }}
+    elif name == "query_table":
+        kb = build_table_knowledge(records, columns)
+        result = answer_table_query(str(args.get("question") or ""), kb)
+        yield {"type": "table_facts", "facts": result.get("facts", []), "snapshot": result.get("knowledge_snapshot")}
+    elif name == "configure_column":
+        skip_src = args.get("skip_if_source_filled")
+        if skip_src == "":
+            skip_src = None
+        config = {
+            "column_label": args.get("column_label"),
+            "custom_prompt": args.get("custom_prompt"),
+            "skip_if_output_filled": args.get("skip_if_output_filled"),
+            "skip_if_source_filled": skip_src,
+            "require_source_fields": args.get("require_source_fields"),
+            "reasoning": args.get("reasoning"),
+        }
+        yield {"type": "column_config", "config": config}
 
 
 async def stream_sculptor(
@@ -672,8 +776,9 @@ async def stream_sculptor(
                         records = [RecordDTO.model_validate(r) for r in payload["records"]]
 
             if all(call.name in PROPOSAL_TOOL_NAMES for call in result.tool_calls):
-                for payload in _finalize_proposals(proposal_gate, intent, columns, messages):
-                    yield _sse(payload)
+                if intent.get("mode") == "architect":
+                    for payload in _finalize_proposals(proposal_gate, intent, columns, messages):
+                        yield _sse(payload)
                 if result.content:
                     yield _sse({"type": "token", "content": result.content})
                 elif proposal_gate.emitted > 0:
@@ -683,23 +788,47 @@ async def stream_sculptor(
                     })
                 break
 
-            llm_messages.append(LLMMessage(
-                role="user",
-                content=f"(Tools executed: {', '.join(executed)}. Summarize results for the user in 2-3 sentences.)",
-            ))
+            # Feed tool results back so the model can write a solid answer
+            tool_notes: list[str] = []
+            for call in result.tool_calls:
+                if call.name == "query_table":
+                    kb = build_table_knowledge(records, columns)
+                    facts = answer_table_query(str(call.arguments.get("question") or ""), kb).get("facts") or []
+                    tool_notes.append("query_table facts:\n- " + "\n- ".join(facts))
+                elif call.name == "configure_column":
+                    tool_notes.append(
+                        f"configure_column applied for '{call.arguments.get('column_label')}': "
+                        f"{call.arguments.get('reasoning') or 'settings updated'}"
+                    )
+                elif call.name == "analyze_table":
+                    tool_notes.append("analyze_table completed — cite the stats in your answer.")
+            followup = (
+                f"(Tools executed: {', '.join(executed)}. "
+                "Write a clear, specific answer for the user using the tool results. "
+                "Use real numbers and names. Do not invent data.)"
+            )
+            if tool_notes:
+                followup += "\n\n" + "\n\n".join(tool_notes)
+            llm_messages.append(LLMMessage(role="user", content=followup))
             continue
 
         if result.content:
             yield _sse({"type": "token", "content": result.content})
         break
 
-    if proposal_gate.emitted == 0 and not emitted_workflow:
+    # Only force a proposal fallback in architect mode for specific field asks
+    if (
+        intent.get("mode") == "architect"
+        and intent.get("is_specific")
+        and proposal_gate.emitted == 0
+        and not emitted_workflow
+    ):
         for payload in _finalize_proposals(
             proposal_gate,
             intent,
             columns,
             messages,
-            allow_failure_message=bool(intent.get("is_specific")),
+            allow_failure_message=True,
         ):
             yield _sse(payload)
 
