@@ -11,7 +11,7 @@ export type EnrichOptions = {
   columnName?: string
   rowIds?: string[]
   businessContext?: string
-  cacLimitUsd?: number
+  emailProviders?: string[]
 }
 
 function apiFetch(input: string, init?: RequestInit): Promise<Response> {
@@ -124,7 +124,7 @@ export async function streamEnrich(
       column_name: options.columnName,
       row_ids: options.rowIds,
       business_context: options.businessContext || null,
-      cac_limit_usd: options.cacLimitUsd ?? null,
+      email_providers: options.emailProviders || null,
     }),
     signal,
   })
@@ -176,7 +176,6 @@ export async function streamSculptor(
   settings?: ProviderSettings,
   businessContext?: string,
   signal?: AbortSignal,
-  cacLimitUsd?: number,
 ): Promise<{ proposals: ColumnProposal[]; records: LeadRecord[] }> {
   const res = await apiFetch(`${API}/sculptor/stream`, {
     method: 'POST',
@@ -188,7 +187,6 @@ export async function streamSculptor(
       provider: settings?.providerId,
       model: settings?.model,
       business_context: businessContext || null,
-      cac_limit_usd: cacLimitUsd ?? null,
     }),
     signal,
   })
