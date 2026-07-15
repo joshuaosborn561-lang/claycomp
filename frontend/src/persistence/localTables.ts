@@ -14,6 +14,7 @@ export type SavedTable = {
   records: LeadRecord[]
   columns: EnrichmentColumn[]
   business_context?: string | null
+  cac_limit_usd?: number | null
   created_at?: string
   updated_at?: string
 }
@@ -84,6 +85,7 @@ export function createEmptyTable(name = 'My Leads'): SavedTable {
     records: [],
     columns: [],
     business_context: null,
+    cac_limit_usd: 200,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }

@@ -10,6 +10,8 @@ export type EnrichOptions = {
   customPrompt?: string
   columnName?: string
   rowIds?: string[]
+  businessContext?: string
+  cacLimitUsd?: number
 }
 
 function apiFetch(input: string, init?: RequestInit): Promise<Response> {
@@ -121,6 +123,8 @@ export async function streamEnrich(
       custom_prompt: options.customPrompt,
       column_name: options.columnName,
       row_ids: options.rowIds,
+      business_context: options.businessContext || null,
+      cac_limit_usd: options.cacLimitUsd ?? null,
     }),
     signal,
   })
@@ -172,6 +176,7 @@ export async function streamSculptor(
   settings?: ProviderSettings,
   businessContext?: string,
   signal?: AbortSignal,
+  cacLimitUsd?: number,
 ): Promise<{ proposals: ColumnProposal[]; records: LeadRecord[] }> {
   const res = await apiFetch(`${API}/sculptor/stream`, {
     method: 'POST',
@@ -183,6 +188,7 @@ export async function streamSculptor(
       provider: settings?.providerId,
       model: settings?.model,
       business_context: businessContext || null,
+      cac_limit_usd: cacLimitUsd ?? null,
     }),
     signal,
   })

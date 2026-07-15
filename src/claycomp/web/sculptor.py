@@ -239,6 +239,15 @@ You can do everything Clay Sculptor does for table workflows:
 - draft_outreach: personalized email openers using enrichments + lead data
 - Reference actual names, companies, locations from the table
 
+**High-touch research offers (Mars CEO flower story)**
+- When users ask about unique gifts, personal hooks, high-profile research, or CAC-aware offers,
+  propose the ordered workflow via propose_workflow:
+  1) research_tier — who is worth expensive research
+  2) personal_hook — unique personal/professional hooks
+  3) unique_offer — gift/offer ideas hard-capped by CAC budget
+- Never suggest luxury gifts over the table CAC limit; instruct to reject and keep looking for cheaper proxies that hit the same emotion
+- Example: if they love Rolexes but CAC is $200, propose a vintage Rolex ads print / vintage watch literature / museum print — not a Rolex
+
 **Formulas & config**
 - edit_column_prompt to refine AI column prompts
 
@@ -254,16 +263,23 @@ Rules:
 - For column proposals: call propose_column OR recommend_columns ONCE per user message — never propose the same column twice
 - After proposing columns, stop — do not call proposal tools again in follow-up turns
 - When the user asks to fill/find/add ONE field (e.g. location), call propose_column exactly ONCE — do NOT use recommend_columns and do NOT suggest other fields
+- When the user asks for high-touch research / unique gifts / CAC-gated offers, call propose_workflow once with the three high-touch steps
 - recommend_columns is only for broad "what should I add?" questions — maximum 1 item, never duplicate topics
 - Never create multiple columns for the same purpose (e.g. one "Location" column, not "Location" + "Full Location" + "Filled Location")"""
 
 
-def _table_context(records: list[RecordDTO], columns: list[dict], business_context: str | None) -> str:
+def _table_context(
+    records: list[RecordDTO],
+    columns: list[dict],
+    business_context: str | None,
+    cac_limit_usd: float | None = None,
+) -> str:
     stats = analyze_table(records, columns)
     lines = [
         f"Table: {stats['row_count']} rows",
         f"Outreach-ready score: {stats.get('outreach_ready_score', 0)}%",
         f"Field completeness: {json.dumps(stats.get('completeness_pct', {}))}",
+        f"CAC limit (USD): {cac_limit_usd if cac_limit_usd is not None else 200}",
     ]
     if columns:
         lines.append("Configured columns: " + ", ".join(c.get("label", "?") for c in columns))
@@ -324,9 +340,13 @@ TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
     "baseball": ("baseball", "mlb", "team"),
     "company": ("company", "employer", "organization"),
     "email": ("email",),
+    "research_tier": ("research tier", "who to research", "high touch", "high-touch", "high profile"),
+    "personal_hook": ("personal hook", "personalization hook", "mars", "flower"),
+    "unique_offer": ("unique offer", "gift idea", "cac", "personalized gift", "offer"),
 }
 
 TOPIC_MATCH_ORDER = (
+    "unique_offer", "personal_hook", "research_tier",
     "location", "title", "restaurant", "review", "baseball", "area", "name", "company", "email",
 )
 
@@ -348,6 +368,49 @@ FALLBACK_PROPOSALS: dict[str, dict[str, str]] = {
         "custom_prompt": "Find the job title for this person at their company.",
         "reasoning": "Fill in missing title data.",
     },
+    "research_tier": {
+        "column_name": "research_tier",
+        "label": "Research Tier",
+        "enricher_key": "research_tier",
+        "reasoning": "Score who is worth expensive high-touch research.",
+    },
+    "personal_hook": {
+        "column_name": "personal_hook",
+        "label": "Personal Hook",
+        "enricher_key": "personal_hook",
+        "reasoning": "Find Mars-flower-style personal hooks for top leads.",
+    },
+    "unique_offer": {
+        "column_name": "unique_offer",
+        "label": "Unique Offer",
+        "enricher_key": "unique_offer",
+        "reasoning": "Design gift/offer ideas hard-capped by your CAC limit.",
+    },
+}
+
+HIGH_TOUCH_WORKFLOW = {
+    "name": "High-touch research offers",
+    "reasoning": (
+        "Qualify who is worth research, find a unique personal hook, then invent an offer "
+        "that never exceeds your CAC limit (reject Rolex-level ideas and keep looking)."
+    ),
+    "steps": [
+        {
+            "enricher_key": "research_tier",
+            "label": "Research Tier",
+            "column_name": "research_tier",
+        },
+        {
+            "enricher_key": "personal_hook",
+            "label": "Personal Hook",
+            "column_name": "personal_hook",
+        },
+        {
+            "enricher_key": "unique_offer",
+            "label": "Unique Offer",
+            "column_name": "unique_offer",
+        },
+    ],
 }
 
 
@@ -446,20 +509,40 @@ def _user_intent(messages: list[ChatMessage]) -> dict[str, Any]:
         if len(non_context) == 1:
             primary_topic = non_context[0]
     is_specific = primary_topic is not None
-    is_workflow = any(w in text for w in ("workflow", "full enrichment", "build a", "all enrichments"))
+    is_high_touch = any(
+        w in text
+        for w in (
+            "high touch", "high-touch", "high profile", "mars", "flower",
+            "unique offer", "unique gift", "personalized gift", "personal hook",
+            "research worth", "who to research", "cac",
+        )
+    )
+    is_workflow = is_high_touch or any(
+        w in text for w in ("workflow", "full enrichment", "build a", "all enrichments")
+    )
     cap = 1
+    if is_high_touch:
+        hint = (
+            "USER INTENT: High-touch research + CAC-capped unique offers. "
+            "Call propose_workflow once with steps: research_tier → personal_hook → unique_offer. "
+            "Remind the user that unique_offer never exceeds the table CAC limit."
+        )
+    elif is_specific and primary_topic:
+        hint = (
+            f"USER INTENT: They asked specifically to enrich **{primary_topic}** only. "
+            f"Call propose_column exactly once for {primary_topic}. "
+            "Do not use recommend_columns. Do not suggest other fields."
+        )
+    else:
+        hint = None
     return {
         "cap": cap,
         "primary_topic": primary_topic,
         "topics": salient_topics,
         "is_specific": is_specific,
-        "hint": (
-            f"USER INTENT: They asked specifically to enrich **{primary_topic}** only. "
-            f"Call propose_column exactly once for {primary_topic}. "
-            "Do not use recommend_columns. Do not suggest other fields."
-        )
-        if is_specific and primary_topic
-        else None,
+        "is_high_touch": is_high_touch,
+        "is_workflow": is_workflow,
+        "hint": hint,
     }
 
 
@@ -500,9 +583,37 @@ def _finalize_proposals(
     intent: dict[str, Any],
     columns: list[dict],
     messages: list[ChatMessage] | None = None,
+    *,
+    allow_failure_message: bool = True,
 ) -> list[dict[str, Any]]:
     if proposal_gate.emitted > 0:
         return []
+
+    if intent.get("is_high_touch"):
+        labels = {str(c.get("label") or "").lower() for c in columns}
+        keys = {str(c.get("enricherKey") or c.get("enricher_key") or "").lower() for c in columns}
+        missing = [
+            step for step in HIGH_TOUCH_WORKFLOW["steps"]
+            if step["enricher_key"] not in keys and step["label"].lower() not in labels
+        ]
+        if not missing:
+            return [{
+                "type": "token",
+                "content": (
+                    "\n\nHigh-touch columns are already on your table — run **Research Tier** first, "
+                    "then **Personal Hook**, then **Unique Offer**. Offers stay under your CAC limit."
+                ),
+            }]
+        return [
+            {"type": "workflow", "workflow": HIGH_TOUCH_WORKFLOW},
+            {
+                "type": "token",
+                "content": (
+                    "\n\nClick **Apply all columns**, set your **Max CAC / gift budget** in Business context, "
+                    "then run the columns in order (tier → hook → offer)."
+                ),
+            },
+        ]
 
     primary = intent.get("primary_topic")
     if not primary and messages:
@@ -523,6 +634,9 @@ def _finalize_proposals(
         fallback = FALLBACK_PROPOSALS.get(primary)
         if fallback and proposal_gate.allow(fallback, force=True):
             return [{"type": "proposal", "proposal": fallback}]
+
+    if not allow_failure_message:
+        return []
 
     return [{
         "type": "token",
@@ -597,8 +711,9 @@ async def stream_sculptor(
     provider: str | None = None,
     model: str | None = None,
     business_context: str | None = None,
+    cac_limit_usd: float | None = None,
 ) -> AsyncIterator[str]:
-    context = _table_context(records, columns, business_context)
+    context = _table_context(records, columns, business_context, cac_limit_usd=cac_limit_usd)
     intent = _user_intent(messages)
     if intent.get("hint"):
         context += "\n\n" + intent["hint"]
@@ -616,10 +731,11 @@ async def stream_sculptor(
         return
 
     proposal_gate = _ProposalGate(
-        cap=intent["cap"],
-        primary_topic=intent.get("primary_topic"),
+        cap=intent["cap"] if not intent.get("is_high_touch") else 3,
+        primary_topic=None if intent.get("is_high_touch") else intent.get("primary_topic"),
         columns=columns,
     )
+    emitted_workflow = False
     for _ in range(3):
         try:
             result = await llm_complete(
@@ -643,6 +759,8 @@ async def stream_sculptor(
                     records=records, columns=columns, provider=provider, model=model,
                     proposal_gate=proposal_gate,
                 ):
+                    if payload.get("type") == "workflow":
+                        emitted_workflow = True
                     yield _sse(payload)
                     if payload.get("type") == "records":
                         records = [RecordDTO.model_validate(r) for r in payload["records"]]
@@ -669,8 +787,15 @@ async def stream_sculptor(
             yield _sse({"type": "token", "content": result.content})
         break
 
-    for payload in _finalize_proposals(proposal_gate, intent, columns, messages):
-        yield _sse(payload)
+    if proposal_gate.emitted == 0 and not emitted_workflow:
+        for payload in _finalize_proposals(
+            proposal_gate,
+            intent,
+            columns,
+            messages,
+            allow_failure_message=bool(intent.get("is_specific") or intent.get("is_high_touch")),
+        ):
+            yield _sse(payload)
 
     yield _sse({"type": "done"})
 

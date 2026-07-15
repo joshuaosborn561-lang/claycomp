@@ -28,6 +28,7 @@ type TableContextValue = {
   records: LeadRecord[]
   columns: EnrichmentColumn[]
   businessContext: string
+  cacLimitUsd: number
   tables: TableMeta[]
   enrichers: Enricher[]
   saveStatus: SaveStatus
@@ -36,6 +37,7 @@ type TableContextValue = {
   setRecords: (records: LeadRecord[]) => void
   setColumns: (columns: EnrichmentColumn[]) => void
   setBusinessContext: (ctx: string) => void
+  setCacLimitUsd: (limit: number) => void
   createTable: (name?: string) => Promise<void>
   switchTable: (id: string) => Promise<void>
   deleteTable: (id: string) => Promise<void>
@@ -49,9 +51,18 @@ function tableSnapshot(
   records: LeadRecord[],
   columns: EnrichmentColumn[],
   businessContext: string,
+  cacLimitUsd: number,
   created_at?: string,
 ): SavedTable {
-  return { id, name, records, columns, business_context: businessContext, created_at }
+  return {
+    id,
+    name,
+    records,
+    columns,
+    business_context: businessContext,
+    cac_limit_usd: cacLimitUsd,
+    created_at,
+  }
 }
 
 export function TableProvider({ children }: { children: ReactNode }) {
@@ -60,6 +71,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
   const [records, setRecordsState] = useState<LeadRecord[]>([])
   const [columns, setColumnsState] = useState<EnrichmentColumn[]>([])
   const [businessContext, setBusinessContextState] = useState('')
+  const [cacLimitUsd, setCacLimitUsdState] = useState(200)
   const [tables, setTables] = useState<TableMeta[]>([])
   const [enrichers, setEnrichers] = useState<Enricher[]>([])
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -73,6 +85,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
     setRecordsState(t.records)
     setColumnsState(t.columns || [])
     setBusinessContextState(t.business_context || '')
+    setCacLimitUsdState(typeof t.cac_limit_usd === 'number' ? t.cac_limit_usd : 200)
     createdAtRef.current = t.created_at
     setActiveTableId(t.id)
   }
@@ -86,8 +99,15 @@ export function TableProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const persist = useCallback(
-    async (id: string, name: string, recs: LeadRecord[], cols: EnrichmentColumn[], ctx: string) => {
-      const snap = tableSnapshot(id, name, recs, cols, ctx, createdAtRef.current)
+    async (
+      id: string,
+      name: string,
+      recs: LeadRecord[],
+      cols: EnrichmentColumn[],
+      ctx: string,
+      cac: number,
+    ) => {
+      const snap = tableSnapshot(id, name, recs, cols, ctx, cac, createdAtRef.current)
       setSaveStatus('saving')
       saveLocalTable(snap)
       const remote = await saveTableRemote(snap)
@@ -98,10 +118,17 @@ export function TableProvider({ children }: { children: ReactNode }) {
   )
 
   const scheduleSave = useCallback(
-    (id: string, name: string, recs: LeadRecord[], cols: EnrichmentColumn[], ctx: string) => {
+    (
+      id: string,
+      name: string,
+      recs: LeadRecord[],
+      cols: EnrichmentColumn[],
+      ctx: string,
+      cac: number,
+    ) => {
       if (!id) return
       if (saveTimer.current) clearTimeout(saveTimer.current)
-      saveTimer.current = setTimeout(() => persist(id, name, recs, cols, ctx), 1200)
+      saveTimer.current = setTimeout(() => persist(id, name, recs, cols, ctx, cac), 1200)
     },
     [persist],
   )
@@ -143,22 +170,28 @@ export function TableProvider({ children }: { children: ReactNode }) {
 
   const setTableName = (name: string) => {
     setTableNameState(name)
-    scheduleSave(tableId, name, records, columns, businessContext)
+    scheduleSave(tableId, name, records, columns, businessContext, cacLimitUsd)
   }
 
   const setRecords = (recs: LeadRecord[]) => {
     setRecordsState(recs)
-    scheduleSave(tableId, tableName, recs, columns, businessContext)
+    scheduleSave(tableId, tableName, recs, columns, businessContext, cacLimitUsd)
   }
 
   const setColumns = (cols: EnrichmentColumn[]) => {
     setColumnsState(cols)
-    scheduleSave(tableId, tableName, records, cols, businessContext)
+    scheduleSave(tableId, tableName, records, cols, businessContext, cacLimitUsd)
   }
 
   const setBusinessContext = (ctx: string) => {
     setBusinessContextState(ctx)
-    scheduleSave(tableId, tableName, records, columns, ctx)
+    scheduleSave(tableId, tableName, records, columns, ctx, cacLimitUsd)
+  }
+
+  const setCacLimitUsd = (limit: number) => {
+    const safe = Number.isFinite(limit) && limit > 0 ? limit : 200
+    setCacLimitUsdState(safe)
+    scheduleSave(tableId, tableName, records, columns, businessContext, safe)
   }
 
   const createTable = async (name = 'New Table') => {
@@ -198,6 +231,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
         records,
         columns,
         businessContext,
+        cacLimitUsd,
         tables,
         enrichers,
         saveStatus,
@@ -206,6 +240,7 @@ export function TableProvider({ children }: { children: ReactNode }) {
         setRecords,
         setColumns,
         setBusinessContext,
+        setCacLimitUsd,
         createTable,
         switchTable,
         deleteTable,
