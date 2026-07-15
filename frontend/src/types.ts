@@ -36,6 +36,16 @@ export type ProviderSettings = {
   model: string
 }
 
+/** Clay-style run rules for an enrichment column. */
+export type RunCondition = {
+  /** Skip rows where this column's output already has a value. */
+  skipIfOutputFilled?: boolean
+  /** Skip rows where a source field (e.g. "email") is already filled. */
+  skipIfSourceFilled?: string
+  /** Only run when these source fields are present. */
+  requireSourceFields?: string[]
+}
+
 export type EnrichmentColumn = {
   id: string
   enricherKey: string
@@ -44,6 +54,7 @@ export type EnrichmentColumn = {
   customPrompt?: string
   provider?: string
   model?: string
+  runCondition?: RunCondition
   running?: boolean
   preview?: boolean
 }
@@ -53,6 +64,18 @@ export type ColumnProposal = {
   label: string
   enricher_key: string
   custom_prompt?: string
+  reasoning?: string
+  skip_if_output_filled?: boolean
+  skip_if_source_filled?: string
+}
+
+export type ColumnConfigPatch = {
+  column_label: string
+  improved_prompt?: string
+  custom_prompt?: string
+  skip_if_output_filled?: boolean
+  skip_if_source_filled?: string | null
+  require_source_fields?: string[]
   reasoning?: string
 }
 

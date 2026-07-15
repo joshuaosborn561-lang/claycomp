@@ -12,6 +12,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { exportCsv, streamEnrich, tableUploadAccept, uploadCsv } from '../api'
+import ColumnSettingsPopover from './ColumnSettingsPopover'
 import EditableCell from './EditableCell'
 import EditableHeader from './EditableHeader'
 import { isAbortError, useJobs } from '../context/JobsContext'
@@ -19,6 +20,10 @@ import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
 import SculptorPanel from './SculptorPanel'
 import TableSwitcher from './TableSwitcher'
+import {
+  defaultRunConditionForEnricher,
+  rowsEligibleForColumn,
+} from '../lib/runConditions'
 import {
   addRow,
   addSourceColumn,
@@ -29,7 +34,7 @@ import {
   updateEnrichedCell,
   updateSourceCell,
 } from '../lib/tableEdits'
-import type { Enricher, EnrichmentColumn } from '../types'
+import type { ColumnConfigPatch, Enricher, EnrichmentColumn } from '../types'
 import { columnOutputKey, formatCell, sourceColumnsFromRecords } from '../types'
 
 const TEST_ROWS = 10
@@ -81,13 +86,53 @@ export default function TableMode() {
       label: enricher.name,
       provider: settings.providerId,
       model: settings.model,
+      runCondition: defaultRunConditionForEnricher(enricher.key),
     })
+  }
+
+  const updateColumn = (id: string, patch: Partial<EnrichmentColumn>) => {
+    setColumns(columns.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+  }
+
+  const applyColumnConfig = (patch: ColumnConfigPatch) => {
+    const target = columns.find(
+      (c) => c.label.toLowerCase() === patch.column_label.toLowerCase(),
+    )
+    if (!target) return false
+    const next: Partial<EnrichmentColumn> = {}
+    const prompt = patch.improved_prompt || patch.custom_prompt
+    if (typeof prompt === 'string') next.customPrompt = prompt
+    const cond = { ...(target.runCondition || {}) }
+    if (typeof patch.skip_if_output_filled === 'boolean') {
+      cond.skipIfOutputFilled = patch.skip_if_output_filled
+    }
+    if (patch.skip_if_source_filled === null) {
+      delete cond.skipIfSourceFilled
+    } else if (typeof patch.skip_if_source_filled === 'string') {
+      cond.skipIfSourceFilled = patch.skip_if_source_filled
+    }
+    if (patch.require_source_fields) {
+      cond.requireSourceFields = patch.require_source_fields
+    }
+    next.runCondition = cond
+    updateColumn(target.id, next)
+    return true
   }
 
   const runColumn = async (col: EnrichmentColumn, testRun = false) => {
     const enricherKey = col.enricherKey === 'custom' ? 'custom' : col.enricherKey
-    const rowIds = testRun ? records.slice(0, TEST_ROWS).map((r) => r.id) : undefined
-    const total = testRun ? Math.min(TEST_ROWS, records.length) : records.length
+    const pool = testRun ? records.slice(0, TEST_ROWS) : records
+    const { eligible, skipped } = rowsEligibleForColumn(pool, col, enrichers)
+    if (!eligible.length) {
+      window.alert(
+        skipped
+          ? `All ${skipped} rows were skipped by this column’s run conditions (e.g. email already filled).`
+          : 'No rows to run.',
+      )
+      return
+    }
+    const rowIds = eligible.map((r) => r.id)
+    const total = eligible.length
 
     setRunningCol(col.id)
     if (testRun) setSandboxCol(col.id)
@@ -132,6 +177,10 @@ export default function TableMode() {
         ),
       )
       setRecords(result)
+      if (skipped > 0) {
+        setProgress(null)
+        // Soft notice via progress bar area is gone; keep quiet after success.
+      }
     } catch (error) {
       if (!isAbortError(error)) throw error
     } finally {
@@ -149,8 +198,15 @@ export default function TableMode() {
       columnName: 'email_waterfall',
       provider: settings.providerId,
       model: settings.model,
+      runCondition: defaultRunConditionForEnricher('email_waterfall'),
     })
   }
+
+  const sourceFieldOptions = useMemo(() => {
+    const extras = ['email', 'company', 'title', 'linkedin_url', 'location', 'first_name', 'last_name']
+    const keys = new Set<string>([...sourceColumns.map((c) => c.key), ...extras])
+    return Array.from(keys)
+  }, [sourceColumns])
 
   const toggleEmailProvider = (key: string) => {
     if (key === 'ai_ark') return // always on
@@ -430,7 +486,12 @@ export default function TableMode() {
                         )}
                       </span>
                       {!col.preview && (
-                        <div className="flex shrink-0">
+                        <div className="flex shrink-0 items-center">
+                          <ColumnSettingsPopover
+                            column={col}
+                            sourceFieldOptions={sourceFieldOptions}
+                            onChange={(patch) => updateColumn(col.id, patch)}
+                          />
                           <button onClick={() => runColumn(col, true)} disabled={runningCol === col.id} className="p-1 rounded-md hover:bg-clay-200/60 disabled:opacity-40" title={`Test (${TEST_ROWS} rows)`}>
                             <FlaskConical className="w-3 h-3" />
                           </button>
@@ -440,6 +501,11 @@ export default function TableMode() {
                         </div>
                       )}
                     </div>
+                    {col.runCondition?.skipIfSourceFilled && (
+                      <p className="text-[9px] font-normal normal-case tracking-normal text-clay-600/80 mt-0.5 truncate">
+                        skip if {col.runCondition.skipIfSourceFilled}
+                      </p>
+                    )}
                   </th>
                 ))}
                 <th className="w-10" />
@@ -514,6 +580,7 @@ export default function TableMode() {
           onApplyWorkflow={(steps) => { for (const col of steps) addColumn(col) }}
           onTest={testProposal}
           onClearPreview={() => setPreviewColumn(null)}
+          onConfigureColumn={applyColumnConfig}
         />
       )}
 

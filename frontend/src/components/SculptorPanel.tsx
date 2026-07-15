@@ -16,8 +16,10 @@ import { streamSculptor } from '../api'
 import { isAbortError, useJobs } from '../context/JobsContext'
 import { useSettings } from '../context/SettingsContext'
 import { useTable } from '../context/TableContext'
+import { defaultRunConditionForEnricher } from '../lib/runConditions'
 import type {
   ChatMessage,
+  ColumnConfigPatch,
   ColumnProposal,
   DiagnosisIssue,
   EnrichmentColumn,
@@ -27,10 +29,10 @@ import type {
 } from '../types'
 
 const STARTERS = [
-  'What enrichments should I add for cold outreach?',
   'Analyze my table — who should I prioritize?',
-  'Add an email finder waterfall for my list',
-  'Build a full enrichment workflow for personalization',
+  'How many leads are missing emails?',
+  'What enrichments should I add for cold outreach?',
+  'Add an email finder waterfall — skip rows that already have an email',
   'Draft email openers for my top 3 leads',
   'Diagnose my table for issues',
 ]
@@ -77,9 +79,16 @@ type Props = {
   onApplyWorkflow: (steps: EnrichmentColumn[]) => void
   onTest: (col: EnrichmentColumn) => void
   onClearPreview?: () => void
+  onConfigureColumn?: (patch: ColumnConfigPatch) => boolean
 }
 
-export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, onClearPreview }: Props) {
+export default function SculptorPanel({
+  onAddColumn,
+  onApplyWorkflow,
+  onTest,
+  onClearPreview,
+  onConfigureColumn,
+}: Props) {
   const { settings } = useSettings()
   const { track } = useJobs()
   const { records, columns, businessContext, setBusinessContext } = useTable()
@@ -88,7 +97,7 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
       id: 'welcome',
       role: 'assistant',
       content:
-        "I'm **Sculptor** — your GTM co-pilot. I can recommend enrichments, build workflows, analyze your data, draft outreach, run tests, and troubleshoot — like Clay.\n\nSet your **business context** below so I tailor everything to your ICP.",
+        "I'm **Sculptor** — your table co-pilot. Ask me anything about this list (counts, gaps, who to prioritize), or ask me to **architect** columns/workflows.\n\nExamples: *“How many leads are missing emails?”* · *“Add an email waterfall that skips rows with an email already.”*\n\nSet **business context** below so answers match your ICP.",
     },
   ])
   const [input, setInput] = useState('')
@@ -100,6 +109,8 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
   const [drafts, setDrafts] = useState<OutreachDraft[]>([])
   const [diagnosis, setDiagnosis] = useState<DiagnosisIssue[]>([])
   const [costNote, setCostNote] = useState<string | null>(null)
+  const [tableFacts, setTableFacts] = useState<string[]>([])
+  const [configNotes, setConfigNotes] = useState<string[]>([])
   const [showContext, setShowContext] = useState(false)
   const [appliedProposalKeys, setAppliedProposalKeys] = useState<Set<string>>(new Set())
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -108,15 +119,28 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamBuffer, proposals, workflows, drafts, analysis])
 
-  const proposalToColumn = (p: ColumnProposal): EnrichmentColumn => ({
-    id: `sculptor-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    enricherKey: p.enricher_key,
-    label: p.label,
-    columnName: p.column_name,
-    customPrompt: p.custom_prompt,
-    provider: settings.providerId,
-    model: settings.model,
-  })
+  const proposalToColumn = (p: ColumnProposal): EnrichmentColumn => {
+    const defaults = defaultRunConditionForEnricher(p.enricher_key) || {}
+    const runCondition = {
+      ...defaults,
+      ...(typeof p.skip_if_output_filled === 'boolean'
+        ? { skipIfOutputFilled: p.skip_if_output_filled }
+        : {}),
+      ...(p.skip_if_source_filled
+        ? { skipIfSourceFilled: p.skip_if_source_filled }
+        : {}),
+    }
+    return {
+      id: `sculptor-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      enricherKey: p.enricher_key,
+      label: p.label,
+      columnName: p.column_name,
+      customPrompt: p.custom_prompt,
+      provider: settings.providerId,
+      model: settings.model,
+      runCondition,
+    }
+  }
 
   const clearArtifacts = () => {
     setProposals([])
@@ -125,6 +149,8 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
     setDrafts([])
     setDiagnosis([])
     setCostNote(null)
+    setTableFacts([])
+    setConfigNotes([])
     setAppliedProposalKeys(new Set())
   }
 
@@ -195,6 +221,7 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
             label: c.label,
             customPrompt: c.customPrompt,
             columnName: c.columnName,
+            runCondition: c.runCondition,
           })),
           (event) => {
             if (event.type === 'token') {
@@ -225,6 +252,22 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
             if (event.type === 'cost_estimate') {
               const est = event.estimate as { estimated_ai_calls: number; sandbox_cost: number }
               setCostNote(`${event.summary} (~${est.estimated_ai_calls} AI calls, test: ${est.sandbox_cost})`)
+            }
+            if (event.type === 'table_facts') {
+              const facts = (event.facts as string[]) || []
+              setTableFacts(facts)
+            }
+            if (event.type === 'column_config' || event.type === 'edit_prompt') {
+              const patch = (event.config || event.edit) as ColumnConfigPatch
+              if (patch?.column_label && onConfigureColumn) {
+                const ok = onConfigureColumn(patch)
+                setConfigNotes((prev) => [
+                  ...prev,
+                  ok
+                    ? `Updated **${patch.column_label}**${patch.reasoning ? ` — ${patch.reasoning}` : ''}`
+                    : `Couldn't find column “${patch.column_label}” to update.`,
+                ])
+              }
             }
           },
           settings,
@@ -264,7 +307,7 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
           </div>
           <div className="flex-1">
             <h2 className="text-sm font-semibold">Sculptor</h2>
-            <p className="text-[10px] text-slate-400">GTM co-pilot · like Clay</p>
+            <p className="text-[10px] text-slate-400">Chat + architect · table-aware</p>
           </div>
         </div>
         <button
@@ -292,6 +335,20 @@ export default function SculptorPanel({ onAddColumn, onApplyWorkflow, onTest, on
         {streamBuffer && (
           <SculptorMessage message={{ id: 'stream', role: 'assistant', content: streamBuffer }} streaming />
         )}
+
+        {tableFacts.length > 0 && (
+          <ArtifactCard icon={<BarChart3 className="w-3.5 h-3.5" />} title="From your table">
+            {tableFacts.map((fact, i) => (
+              <p key={i} className="text-[10px] text-slate-600 mt-1">• {fact}</p>
+            ))}
+          </ArtifactCard>
+        )}
+
+        {configNotes.map((note, i) => (
+          <p key={i} className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1.5">
+            {note.replace(/\*\*/g, '')}
+          </p>
+        ))}
 
         {analysis && (
           <ArtifactCard icon={<BarChart3 className="w-3.5 h-3.5" />} title="Table analysis">
@@ -468,6 +525,16 @@ function ProposalCard({
           {proposal.reasoning && <p className="text-[10px] text-slate-500 mt-0.5">{proposal.reasoning}</p>}
           {proposal.custom_prompt && (
             <p className="text-[9px] text-slate-400 mt-1 line-clamp-2">Prompt: {proposal.custom_prompt}</p>
+          )}
+          {(proposal.skip_if_source_filled || proposal.skip_if_output_filled) && (
+            <p className="text-[9px] text-clay-600 mt-1">
+              {[
+                proposal.skip_if_output_filled ? 'skip if already filled' : null,
+                proposal.skip_if_source_filled ? `skip if ${proposal.skip_if_source_filled}` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
           )}
         </div>
       </div>
